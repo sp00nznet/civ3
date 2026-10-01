@@ -1,0 +1,19 @@
+/* Headless capture of the game's GDI output; see record.c. */
+#pragma once
+#include <windows.h>
+
+int  record_arg(int argc, char** argv, int i);   /* args consumed, 0 if not ours */
+void record_resolve_path(void);                  /* call before chdir */
+void record_start(void);
+void record_close(void);
+
+/* Patch a native module's imports for headless and capture (LoadLibraryA hook). */
+void record_hook_module(HMODULE m, int headless);
+
+extern HWND g_game_hwnd;
+extern volatile LONG g_blits;
+
+/* input.c: --move / --click / --key scripts for headless runs. */
+int  input_arg(int argc, char** argv, int i);
+void input_start(void);
+BOOL WINAPI input_GetCursorPos(POINT* p);
