@@ -110,7 +110,7 @@ The host now hands the game the 8.3 short form of its folder (`host.c`,
 `GetShortPathNameA`):
 
 ```
-  guest exe C:\Users\nedch\AppData\Local\Temp\claude\G-5A7E~1\EDF61A~1\SCRATC~1\clean\civ3\game\CONQUE~1\Civ3Conquests.exe
+  guest exe C:\Users\<user>\AppData\Local\Temp\...\SCRATC~1\clean\civ3\game\CONQUE~1\Civ3Conquests.exe
 [record] first blit to the game window
 ```
 
