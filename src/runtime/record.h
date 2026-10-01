@@ -12,6 +12,7 @@ void record_hook_module(HMODULE m, int headless);
 
 extern HWND g_game_hwnd;
 extern volatile LONG g_blits;
+extern volatile LONG g_menu_open;     /* input.c: the main menu has opened (the clock for scripts, --play, --record) */
 
 /* input.c: --move / --click / --key scripts for headless runs. */
 int  input_arg(int argc, char** argv, int i);

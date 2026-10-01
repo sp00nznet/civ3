@@ -28,7 +28,7 @@ extern const uint32_t civ3_entry_va;   /* recomp_dispatch.c */
 
 #define CIV3_IMAGE_BASE 0x00400000u
 
-static DWORD g_watchdog_s;
+static DWORD g_watchdog_s, g_play_s;
 static int   g_headless;
 
 #define ARG(n) MEM32(g_esp + 4 + 4 * (n))
@@ -108,6 +108,17 @@ static void shim_ShowWindow(void) {
     g_esp += 4 + 2 * 4;
 }
 
+/* The game refuses a second copy of itself through a named mutex
+ * ("smciv3PTW21030"). Headless runs are tests, and tools/playtest.py runs
+ * several at once, so each one gets its own name. */
+static void shim_CreateMutexA(void) {
+    char name[96];
+    const char* n = (const char*)(uintptr_t)ARG(2);
+    if (n) _snprintf(name, sizeof name - 1, "%s-%lu", n, GetCurrentProcessId()), name[sizeof name - 1] = 0;
+    g_eax = (uint32_t)(uintptr_t)CreateMutexA((LPSECURITY_ATTRIBUTES)(uintptr_t)ARG(0), (BOOL)ARG(1), n ? name : NULL);
+    g_esp += 4 + 3 * 4;
+}
+
 /* jgl.dll and sound.dll come in through LoadLibraryA. jgl creates and
  * presents the game window itself, so its imports are patched as it loads
  * (record.c): the headless half, and the blit mirror for --record. */
@@ -119,12 +130,33 @@ static void shim_LoadLibraryA(void) {
     g_esp += 4 + 1 * 4;
 }
 
+/* Exit unloads jgl.dll in WinMain (sub_005786F0) and then the CRT runs the
+ * static destructors, one of which (sub_00609710) still reads an object jgl
+ * allocated: with jgl gone that is unmapped memory, and Exit faulted instead
+ * of exiting. The game only ever unloads at shutdown, so unloading is
+ * skipped; the process is about to end and takes the DLLs with it. */
+static void shim_FreeLibrary(void) {
+    g_eax = 1;
+    g_esp += 4 + 1 * 4;
+}
+
+/* The game ends with ExitProcess, which never returns to main(): finish the
+ * recording first, or the mp4 has no index. */
+static void shim_ExitProcess(void) {
+    fprintf(stderr, "[game] ExitProcess(%u)\n", ARG(0));
+    record_close();
+    fflush(stderr);
+    ExitProcess(ARG(0));
+}
+
 #define GUEST_SHIMS \
     { "GetModuleHandleA", shim_GetModuleHandleA }, \
     { "GetModuleFileNameA", shim_GetModuleFileNameA }, \
     { "GetCommandLineA", shim_GetCommandLineA }, \
     { "CreateWindowExA", shim_CreateWindowExA }, \
-    { "LoadLibraryA", shim_LoadLibraryA }
+    { "LoadLibraryA", shim_LoadLibraryA }, \
+    { "FreeLibrary", shim_FreeLibrary }, \
+    { "ExitProcess", shim_ExitProcess }
 
 static native32_shim_t g_shims[] = { GUEST_SHIMS };
 
@@ -132,6 +164,7 @@ static native32_shim_t g_headless_shims[] = {
     GUEST_SHIMS,
     { "MessageBoxA", shim_MessageBoxA },
     { "ShowWindow", shim_ShowWindow },
+    { "CreateMutexA", shim_CreateMutexA },
 };
 
 /* ------------------------------------------------------------- diagnostics */
@@ -211,10 +244,18 @@ static LONG CALLBACK crash(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+/* --watchdog S counts from the start; --play S from the main menu, so a
+ * scripted case gets the same game time however long the load took (several
+ * runs at once load slower). Either one ends the run the same way. */
 static DWORD WINAPI watchdog(LPVOID unused) {
     (void)unused;
+    if (g_play_s) {
+        while (!g_menu_open) Sleep(50);
+        g_watchdog_s = g_play_s;
+    }
     Sleep(g_watchdog_s * 1000);
-    fprintf(stderr, "\n[watchdog] %lu s: in sub_%08X, last native call %s, %u indirect calls\n",
+    fprintf(stderr, "\n[watchdog] %lu s: %ld blits to the game window\n", g_watchdog_s, g_blits);
+    fprintf(stderr, "[watchdog] %lu s: in sub_%08X, last native call %s, %u indirect calls\n",
             g_watchdog_s, g_cur_func, g_cur_import, g_icall_count);
     native32_dump_icalls(8);
     probe_report();
@@ -241,13 +282,14 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--exe") && i + 1 < argc) exe = argv[++i];
         else if (!strcmp(argv[i], "--game") && i + 1 < argc) game = argv[++i];
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) g_watchdog_s = strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--play") && i + 1 < argc) g_play_s = strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--native-trace")) native32_trace_native = 1;
         else if (!strcmp(argv[i], "--callbacks")) native32_trace_callbacks = 1;
         else {
             printf("usage: civ3 [--run] [--headless] [--record out.mp4] [--frames N] [--fps N]\n"
                    "            [--move x,y@s] [--click x,y@s] [--key vk@s]\n"
                    "            [--exe work\\Civ3Conquests.exe] [--game game\\Conquests]\n"
-                   "            [--watchdog S] [--probe VA] [--native-trace] [--callbacks]\n");
+                   "            [--watchdog S] [--play S] [--probe VA] [--native-trace] [--callbacks]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
         }
@@ -289,7 +331,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (!SetCurrentDirectoryA(gd)) { fprintf(stderr, "cannot enter %s\n", gd); return 1; }
-    if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
+    if (g_watchdog_s || g_play_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
     record_start();
     input_start();
     printf("  entering 0x%08X\n\n", civ3_entry_va);

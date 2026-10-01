@@ -46,11 +46,14 @@ void record_resolve_path(void) {
     if (g_record) { GetFullPathNameA(g_record, MAX_PATH, g_record_full, NULL); g_record = g_record_full; }
 }
 
-/* The shadow is sized on the first blit (the game settles its resolution
- * before it presents). ponytail: fixed after that, a mid-run resolution change
- * would need the ffmpeg pipe reopened. */
+/* The shadow follows the game window's client size until the encoder opens
+ * (the first frames can come before the game sets its resolution, at the
+ * desktop's size), rounded down to even for x264. ponytail: fixed after that;
+ * a mid-run resolution change would need the ffmpeg pipe reopened. */
 static void shadow_ensure(int w, int h) {
-    if (g_shadow_dc || w <= 0 || h <= 0) return;
+    w &= ~1; h &= ~1;
+    if (w <= 0 || h <= 0 || (g_shadow_dc && w == g_w && h == g_h) || g_ffmpeg) return;
+    if (g_shadow_dc) { DeleteDC(g_shadow_dc); DeleteObject(g_shadow_bmp); }
     BITMAPINFO bi = { { sizeof(BITMAPINFOHEADER), w, -h, 1, 32, BI_RGB } };
     g_shadow_dc = CreateCompatibleDC(NULL);
     g_shadow_bmp = CreateDIBSection(g_shadow_dc, &bi, DIB_RGB_COLORS, &g_shadow_bits, NULL, 0);
@@ -59,15 +62,24 @@ static void shadow_ensure(int w, int h) {
     fprintf(stderr, "[record] game surface %dx%d\n", w, h);
 }
 
+volatile LONG g_blits_other;
+
 static int is_game_dc(HDC dc) {
     HWND w = WindowFromDC(dc);
-    return w && g_game_hwnd && (w == g_game_hwnd || IsChild(g_game_hwnd, w));
+    int game = w && g_game_hwnd && (w == g_game_hwnd || IsChild(g_game_hwnd, w));
+    if (!game && w && InterlockedIncrement(&g_blits_other) <= 5) {
+        char cls[64] = "";
+        GetClassNameA(w, cls, sizeof cls);
+        fprintf(stderr, "[record] blit to another window %p (class \"%s\", parent %p, game %p)\n",
+                (void*)w, cls, (void*)GetParent(w), (void*)g_game_hwnd);
+    }
+    return game;
 }
 
 static void shadow_size(void) {
     if (!g_record) return;
     RECT r;
-    if (!g_shadow_dc && GetClientRect(g_game_hwnd, &r)) shadow_ensure(r.right, r.bottom);
+    if (GetClientRect(g_game_hwnd, &r)) shadow_ensure(r.right, r.bottom);
 }
 
 static BOOL WINAPI hk_BitBlt(HDC d, int x, int y, int w, int h, HDC s, int sx, int sy, DWORD rop) {
@@ -161,6 +173,41 @@ static LONG WINAPI hk_ChangeDisplaySettingsA(DEVMODEA* dm, DWORD fl) {
     return ChangeDisplaySettingsA(dm, fl);
 }
 
+/* Painting a hidden window. Most of what jgl draws it presents from WM_PAINT:
+ * it invalidates the changed rectangle and blits in BeginPaint..EndPaint. A
+ * window that is not visible never gets WM_PAINT, so headless, everything
+ * after the main menu froze on the last direct blit (New Game: 300
+ * invalidates, 3 blits in 40 s). So the host keeps the invalid rectangle
+ * itself, posts the WM_PAINT Windows would have sent, and BeginPaint reports
+ * that rectangle instead of the empty one a hidden window has. */
+static RECT g_dirty;
+static volatile LONG g_paint_posted;
+
+static BOOL WINAPI hk_InvalidateRect(HWND h, const RECT* r, BOOL erase) {
+    BOOL ok = InvalidateRect(h, r, erase);
+    if (h == g_game_hwnd) {
+        RECT all;
+        if (!r) { GetClientRect(h, &all); r = &all; }
+        EnterCriticalSection(&g_lock);
+        UnionRect(&g_dirty, &g_dirty, r);
+        LeaveCriticalSection(&g_lock);
+        if (!InterlockedExchange(&g_paint_posted, 1)) PostMessageA(h, WM_PAINT, 0, 0);
+    }
+    return ok;
+}
+
+static HDC WINAPI hk_BeginPaint(HWND h, PAINTSTRUCT* ps) {
+    HDC dc = BeginPaint(h, ps);
+    if (h == g_game_hwnd) {
+        InterlockedExchange(&g_paint_posted, 0);
+        EnterCriticalSection(&g_lock);
+        ps->rcPaint = g_dirty;
+        SetRectEmpty(&g_dirty);
+        LeaveCriticalSection(&g_lock);
+    }
+    return dc;
+}
+
 /* Replace one import of module m, by name, in place. */
 static int iat_patch(HMODULE m, const char* name, void* fn) {
     BYTE* b = (BYTE*)m;
@@ -195,6 +242,8 @@ void record_hook_module(HMODULE m, int headless) {
         iat_patch(m, "CreateWindowExA", (void*)hk_CreateWindowExA);
         iat_patch(m, "ShowWindow", (void*)hk_ShowWindow);
         iat_patch(m, "MessageBoxA", (void*)hk_MessageBoxA);
+        iat_patch(m, "InvalidateRect", (void*)hk_InvalidateRect);
+        iat_patch(m, "BeginPaint", (void*)hk_BeginPaint);
         iat_patch(m, "GetCursorPos", (void*)input_GetCursorPos);
     }
 }
@@ -221,7 +270,7 @@ static DWORD WINAPI recorder(LPVOID unused) {
         DWORD now = GetTickCount();
         if ((LONG)(next - now) > 0) Sleep(next - now);
         EnterCriticalSection(&g_lock);
-        if (g_shadow_dc && !g_ffmpeg && !g_closed) {
+        if (g_shadow_dc && !g_ffmpeg && !g_closed && g_menu_open) {   /* sized by then */
             char cmd[MAX_PATH * 2];
             _snprintf(cmd, sizeof cmd - 1, "ffmpeg -y -loglevel error -f rawvideo -pix_fmt bgr0 "
                       "-s %dx%d -r %ld -i - -c:v libx264 -pix_fmt yuv420p \"%s\"", g_w, g_h, g_fps, g_record);

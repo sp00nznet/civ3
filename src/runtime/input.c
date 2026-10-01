@@ -2,8 +2,8 @@
  * Scripted input for headless runs: --move x,y@s  --click x,y@s  --key vk@s
  *
  * x,y are game client pixels (1024x768 at the default resolution); s is
- * seconds after the first frame reached the window, so a script does not
- * depend on how long the load took. The game reads the mouse from window
+ * seconds after the main menu opened, so a script does not depend on how long
+ * the load took. The game reads the mouse from window
  * messages that jgl.dll's window procedure forwards, plus jgl's own
  * GetCursorPos, so a script is posted messages to the hidden window and a
  * GetCursorPos (patched into jgl, record.c) that answers the scripted spot.
@@ -20,7 +20,7 @@
 #include <string.h>
 #include "record.h"
 
-typedef struct { char kind; int x, y; double t; } ev_t;
+typedef struct { char kind; int x, y; double t; char path[MAX_PATH]; } ev_t;
 #define MAX_EV 64
 static ev_t g_ev[MAX_EV];
 static int g_nev;
@@ -35,6 +35,19 @@ int input_arg(int argc, char** argv, int i) {
     if (!strcmp(argv[i], "--move") || !strcmp(argv[i], "--click")) {
         if (sscanf(a, "%d,%d@%lf", &e.x, &e.y, &e.t) != 3) return 0;
         e.kind = argv[i][2];                    /* 'm' or 'c' */
+    } else if (!strcmp(argv[i], "--autopilot")) {
+        /* --autopilot MS@s: from s on, Space then Enter every MS ms. Space
+         * skips the selected unit, Enter ends the turn or takes a popup's
+         * default, so turns keep rolling and the AI plays its own. */
+        if (sscanf(a, "%d@%lf", &e.x, &e.t) != 2) return 0;
+        e.kind = 'a';
+    } else if (!strcmp(argv[i], "--dump")) {
+        /* --dump s:FILE: the guest's .data and .bss (0x0069D000-0x00CF315C),
+         * raw, at s. Two dumps a turn apart find a counter. */
+        char* c = strchr(a, ':');
+        if (!c || sscanf(a, "%lf", &e.t) != 1) return 0;
+        GetFullPathNameA(c + 1, MAX_PATH, e.path, NULL);       /* the run chdirs */
+        e.kind = 'd';
     } else if (!strcmp(argv[i], "--key")) {
         if (sscanf(a, "%i@%lf", &e.x, &e.t) != 2) return 0;
         e.kind = 'k';
@@ -128,19 +141,37 @@ static int cmp_ev(const void* a, const void* b) {
  * pixels: [0xB64E1E] is set while the main menu's modal loop runs (sub_0055A76C
  * sets and clears it around sub_0055A370), so 1 -> 0 means a menu choice was
  * taken. Polled from a host thread; guest memory is mapped 1:1. */
+volatile LONG g_menu_open;
+
 static DWORD WINAPI milestones(LPVOID unused) {
     (void)unused;
     volatile uint8_t* menu = (volatile uint8_t*)(uintptr_t)0xB64E1E;
     while (!*menu) Sleep(100);
+    InterlockedExchange(&g_menu_open, 1);
     fprintf(stderr, "[game] main menu open\n");
     while (*menu) Sleep(100);
     fprintf(stderr, "[game] main menu closed: a menu choice was taken\n");
     return 0;
 }
 
+static void key(HWND h, int vk) {
+    PostMessageA(h, WM_KEYDOWN, vk, 1);
+    Sleep(60);
+    PostMessageA(h, WM_KEYUP, vk, 0xC0000001);
+}
+
+static DWORD WINAPI autopilot(LPVOID period) {
+    for (;;) {
+        key(g_game_hwnd, VK_SPACE);
+        Sleep((DWORD)(intptr_t)period / 2);
+        key(g_game_hwnd, VK_RETURN);
+        Sleep((DWORD)(intptr_t)period / 2);
+    }
+}
+
 static DWORD WINAPI script(LPVOID unused) {
     (void)unused;
-    while (!g_blits) Sleep(50);
+    while (!g_menu_open) Sleep(50);
     if (g_input_peek) { recomp_trace_extra = hist_hook; Sleep(3000); g_hphase = 0; Sleep(3000); g_hphase = -1; }
     DWORD t0 = GetTickCount();
     for (int i = 0; i < g_nev; i++) {
@@ -148,6 +179,17 @@ static DWORD WINAPI script(LPVOID unused) {
         LONG wait = (LONG)(e->t * 1000) - (LONG)(GetTickCount() - t0);
         if (wait > 0) Sleep(wait);
         HWND h = g_game_hwnd;
+        if (e->kind == 'd') {
+            FILE* f = fopen(e->path, "wb");
+            if (f) { fwrite((const void*)(uintptr_t)0x0069D000, 1, 0x00CF315C - 0x0069D000, f); fclose(f); }
+            fprintf(stderr, "[input] %.1fs dump -> %s\n", e->t, e->path);
+            continue;
+        }
+        if (e->kind == 'a') {
+            fprintf(stderr, "[input] %.1fs autopilot every %d ms\n", e->t, e->x);
+            CloseHandle(CreateThread(NULL, 0, autopilot, (LPVOID)(intptr_t)e->x, 0, NULL));
+            continue;
+        }
         if (e->kind == 'k') {
             fprintf(stderr, "[input] %.1fs key 0x%X\n", e->t, e->x);
             PostMessageA(h, WM_KEYDOWN, e->x, 1);
