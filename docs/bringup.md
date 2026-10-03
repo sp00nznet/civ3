@@ -116,3 +116,64 @@ The host now hands the game the 8.3 short form of its folder (`host.c`,
 
 On a volume with 8.3 names turned off this does nothing; keep the repository
 in a short path there.
+
+## 7. Headless recordings froze after the main menu
+
+Every menu item but Quick Start seemed to do nothing: the recording stayed on
+the menu. The game was fine. `--native-trace` after New Game showed it
+loading 225 art files, and a blit counter showed 3 blits in 40 s. jgl presents
+most screens from `WM_PAINT`: it calls `InvalidateRect` (300 times in those
+40 s) and blits between `BeginPaint` and `EndPaint`. A window that is not
+visible never gets `WM_PAINT`.
+
+Headless, the host now does what Windows would for a visible window
+(`record.c`): it keeps the invalidated rectangle, posts the `WM_PAINT`, and
+makes `BeginPaint` report that rectangle. New Game went from 3 blits to 113
+and its *Choose Your World* screen appeared.
+
+Two knock-on fixes. The first paints now arrive before the game sets its
+resolution, at the desktop's size (480x1131 on a phone over RDP, which x264
+refuses: odd height), so the recording surface follows the window until
+encoding starts, rounded to even. And scripts, `--play` and `--record` now
+start their clocks when the main menu opens rather than at the first frame,
+which is no longer a stable point.
+
+## 8. Exit faulted
+
+```
+=== fault 0xC0000005 at 0x641B2A6A, thread 14312 ===
+  read of 0x0605A1D0
+  in lifted sub_00609710, last native call (none)
+```
+
+WinMain (`sub_005786F0`) calls `FreeLibrary(jgl.dll)` and returns; the CRT
+then runs the static destructors (the calls from `0x00668939`), and
+`sub_00609710` reads an object jgl allocated. With jgl unloaded, that memory
+is gone. The order is the original's; on Windows this is a crash after the
+window has already closed. The game only unloads at shutdown, so the
+guest's `FreeLibrary` is a no-op, and `ExitProcess` closes the recording
+before it ends the process. Exit now ends with code 0.
+
+## 9. Exit missed its click
+
+Unrelated to 8: the menu's hit box for an item is its text width plus 64 px,
+from x=187 (`sub_00559BE0`). "Exit" is short, so its box ends near x=280, and
+the scripts clicked at x=291. They click at x=240 now.
+
+## 10. Parallel runs: hangs and a shared folder
+
+`tools/playtest.py` runs several cases at once. With 8 at a time, 31 New
+Game runs gave 26 clean, 4 stuck before the main menu, and 1 fault. The
+stuck ones were blocked inside a native call, not spinning (2.38M indirect
+calls in 600 s, about the rate of an idle frame loop that stopped), and the
+last call was the Steam client's networking interface, from the game's Steam
+pump `sub_004A1B80`. Run alone, each of them passed. `--nosteam` makes
+`SteamAPI_Init` fail; the game shows "Steam must be running", and then plays
+on normally, so test runs use it.
+
+The game also writes into its own folder: fixed-name temp files
+(`bic__in_.tmp`, `bic__out.tmp`, `save0.tmp`), autosaves, `conquests.ini`,
+and a regenerated `LSANS.fot`. Cases sharing one folder clobbered each other:
+"Could not open scenario file", "FILE NOT FOUND". Each case now gets its own
+game folder of hard links (no disk cost; whatever the game writes stays in
+that copy). After both changes: 31 of 31 clean, in half the time.

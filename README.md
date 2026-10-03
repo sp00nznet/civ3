@@ -20,7 +20,7 @@ Take-Two Interactive.** No game files are in this repository, and neither is
 the generated C: you supply your own copy and the pipeline builds everything
 locally.
 
-## Status: v0.1.0-dev, alpha. The whole game is lifted, boots, and plays: Quick Start, found a city, end the turn.
+## Status: v0.1.0-dev, alpha. The whole game is lifted, boots, and plays, and it plays the same game as the original: the same state, turn after turn.
 
 | Stage | State |
 |---|---|
@@ -31,17 +31,37 @@ locally.
 | Headless mode | `--headless --record out.mp4`: hidden window, jgl's GDI blits mirrored to ffmpeg. Works over RDP |
 | Scripted input | `--move`, `--click`, `--key`: mouse and keyboard as posted window messages |
 | Conformance harness | `tools/conformance.py`: **7/7 milestones**, through a scripted Quick Start into a game; lift health; fails on regression |
+| Differential test | `tools/oracle.py`: the same host runs the original machine code (`--original`) next to the lifted C from one save. **The same game state every turn for 19 turns** (3900 to 2950 BC, the AI moving every civ) ([testing.md](docs/testing.md)) |
+| Play tests | `tools/playtest.py`: 100 scripted cases with pass/fail verdicts: every main-menu item and the way back, every in-game screen by hotkey and button followed by 5 turns, New Game as all 31 civs, all 12 Conquests scenarios ([testing.md](docs/testing.md)) |
 
 ### Compatibility
 
 | Mode | State |
 |---|---|
-| Main menu | works. Like the original, the first click on an item selects it and the second activates it |
-| Quick Start, found a city, city screen, end turn | works (scripted headless run, 4000 BC to 3950 BC) |
-| New Game setup screens, Load Game, later eras | not tested yet |
-| Intro movie (Bink) | runs (`_BinkWait` in the call trail), not captured by `--record` |
+| Main menu | works: every item opens its screen, and Esc comes back. An item takes one click or two, depending on whether the menu took the hover first |
+| New Game (all 31 civilizations), Quick Start, Load Game, Conquests! scenarios (all 12) | work (scripted headless runs, each played on by the autopilot) |
+| In game: advisors F1-F11, Save, Load, Preferences, Civilopedia, Government, Retire, Quit, New Game, the menu buttons | work: each screen opens, closes, and the game plays 5 more turns |
+| Same game as the original | yes: the lifted build and the original machine code reach the same game state every turn (`tools/oracle.py`) |
+| Higher resolutions | 1280x1024 works (`KeepRes=1` and `Video Mode=1280` in `conquests.ini`, below). The desktop's own size (`KeepRes=1` alone) needs a host fix that is written but untested |
+| Intro and wonder movies (Bink) | play on a real display. Headless over RDP the intro faulted in `BinkBufferOpen` in waves, so the test runs set `PlayIntro=0` |
 | Windowed/full-screen play at the console | not tested yet: every run so far was headless over RDP |
 | Multiplayer, force feedback | not tested |
+
+### Resolution
+
+The game reads its display size from `game\Conquests\conquests.ini` at start
+(`sub_005786F0`), with two keys most players never saw:
+
+| `KeepRes` | `Video Mode` | The game runs at |
+|---|---|---|
+| 0 or absent | ignored | 1024x768 |
+| 1 | 1600 / 1280 / 1152 / other | 1600x1200 / 1280x1024 / 1152x864 / 1024x768 |
+| 1 | absent or 0 | the desktop's size, from 1024x768 up to 8192x8192 |
+
+The map takes the whole screen and the interface sits in its corners; full-screen
+art like the main menu is centred. The same startup code also reads
+`QuickStart`, `NoSound`, `Refresh`, `NoForceFeedback`, `NoAIPatrol` and
+`Yumbo` (compared against 907: a developer switch, not yet explored).
 
 ## Screenshots
 
@@ -149,16 +169,24 @@ From the repository root:
 build\civ3.exe --run                                                  # a window (untested: every run so far was headless)
 build\civ3.exe --headless --run --watchdog 120                        # boot, report, stop
 build\civ3.exe --headless --run --record work\boot.mp4 --watchdog 200 # record to the main menu
-build\civ3.exe --headless --run --record work\qs.mp4 --watchdog 200 --move 291,383@6 --click 291,383@8 --click 291,383@11
+build\civ3.exe --headless --run --record work\qs.mp4 --watchdog 200 --move 240,383@6 --open 240,383@8
+build\civ3.exe --headless --run --original ...                        # the original machine code instead of the lifted C
 build\civ3.exe --help                                                 # every option
+py -3 tools\playtest.py --list                                        # the scripted play tests
+py -3 tools\oracle.py                                                 # lifted vs original, turn by turn
 ```
 
 `--headless` keeps everything off the screen (a hidden window, display-mode
 changes ignored, message boxes to stderr), so it is safe over RDP. `--record`
-needs `ffmpeg` on `PATH`. Script times are seconds after the first frame
-reaches the window; x,y are 1024x768 client pixels. The Quick Start line
-clicks the item twice: the first click selects, the second activates. The
-full first-turn script is in [bringup.md](docs/bringup.md#4-menu-clicks-two-clicks-not-one).
+needs `ffmpeg` on `PATH`. Script times are seconds after the main menu
+opens; x,y are 1024x768 client pixels. `--open` clicks until the screen
+changes (a main-menu item takes one click or two), `--key c+0x53@s` is Ctrl-S,
+and `--wait 0xA74EA4@s` holds the script until a save has loaded (that is the
+turn number). All of it is in [testing.md](docs/testing.md).
+
+Run play tests a few at a time (`--jobs 3`): with eight or nine at once over
+RDP, the host machine became unresponsive and its RDP session stopped
+reconnecting.
 
 ## Building from source
 
@@ -192,9 +220,12 @@ civ3/
   src/runtime/host.c    the host on pcrecomp runtime/native32
   src/runtime/record.c  jgl.dll hooks: 16-bit colour shim, headless, --record
   src/runtime/input.c   scripted input, [game] milestones, --peek
+  src/runtime/oracle.c  --original: the shipping machine code, run natively as the reference
   src/recomp/gen/    lifted C (generated, gitignored, never committed)
   tools/conformance.py  the boot/lift harness; conformance.json is its baseline
-  docs/              RECON.md, host.md, bringup.md
+  tools/playtest.py     the scripted play tests
+  tools/oracle.py       lifted vs original, save by save
+  docs/              RECON.md, host.md, bringup.md, testing.md
   game/              your install (gitignored)
   work/              executable copy, catalog, logs, recordings (gitignored)
 ```

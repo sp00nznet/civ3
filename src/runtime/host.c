@@ -25,6 +25,8 @@
 #include "record.h"
 
 extern const uint32_t civ3_entry_va;   /* recomp_dispatch.c */
+int oracle_run(const char* exe_full, const char* guest_exe, const char* cmdline, int headless, int nosteam,
+               void (*before_entry)(void));
 
 #define CIV3_IMAGE_BASE 0x00400000u
 
@@ -144,12 +146,31 @@ static void shim_FreeLibrary(void) {
  * recording first, or the mp4 has no index. */
 static void shim_ExitProcess(void) {
     fprintf(stderr, "[game] ExitProcess(%u)\n", ARG(0));
+    InterlockedExchange(&g_exiting, 1);
     record_close();
     fflush(stderr);
     ExitProcess(ARG(0));
 }
 
+/* --nosteam: SteamAPI_Init fails, as it does with no Steam client running.
+ * Several headless runs at once all polling the Steam client's networking
+ * interface stalled one of them for good before the main menu (a native call
+ * that never returned); single-player needs nothing from Steam. */
+static int g_nosteam;
+static void shim_SteamAPI_Init(void) {
+    g_eax = 0;
+    g_esp += 4;
+}
+
+/* Scripted Ctrl/Shift (input.c); both have one int argument and return SHORT. */
+static void shim_GetKeyState(void) {
+    g_eax = (uint32_t)(int32_t)input_key_state((int)ARG(0));
+    g_esp += 4 + 1 * 4;
+}
+
 #define GUEST_SHIMS \
+    { "GetKeyState", shim_GetKeyState }, \
+    { "GetAsyncKeyState", shim_GetKeyState }, \
     { "GetModuleHandleA", shim_GetModuleHandleA }, \
     { "GetModuleFileNameA", shim_GetModuleFileNameA }, \
     { "GetCommandLineA", shim_GetCommandLineA }, \
@@ -250,10 +271,17 @@ static LONG CALLBACK crash(EXCEPTION_POINTERS* ep) {
 static DWORD WINAPI watchdog(LPVOID unused) {
     (void)unused;
     if (g_play_s) {
-        while (!g_menu_open) Sleep(50);
-        g_watchdog_s = g_play_s;
+        /* With both, --watchdog bounds the boot: a hang before the menu
+         * still ends with a report instead of never ending. */
+        DWORD t0 = GetTickCount();
+        while (!g_menu_open && !(g_watchdog_s && GetTickCount() - t0 >= g_watchdog_s * 1000)) Sleep(50);
+        if (g_menu_open) g_watchdog_s = g_play_s;
+        else fprintf(stderr, "\n[watchdog] no main menu after %lu s\n", g_watchdog_s);
     }
-    Sleep(g_watchdog_s * 1000);
+    if (!g_play_s || g_menu_open) Sleep(g_watchdog_s * 1000);
+    /* The game is already exiting: ExitProcess waits for the encoder to drain
+     * (record_close), which under load runs past the end of a timed run. */
+    if (g_exiting) Sleep(INFINITE);
     fprintf(stderr, "\n[watchdog] %lu s: %ld blits to the game window\n", g_watchdog_s, g_blits);
     fprintf(stderr, "[watchdog] %lu s: in sub_%08X, last native call %s, %u indirect calls\n",
             g_watchdog_s, g_cur_func, g_cur_import, g_icall_count);
@@ -265,11 +293,19 @@ static DWORD WINAPI watchdog(LPVOID unused) {
     return 0;
 }
 
+/* The watchdog, recorder and input threads read guest memory (input.c polls
+ * the menu flag), so they start once the image is mapped. */
+static void start_threads(void) {
+    if (g_watchdog_s || g_play_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
+    record_start();
+    input_start();
+}
+
 int main(int argc, char** argv) {
     const char* exe = "work\\Civ3Conquests.exe";
     const char* game = "game\\Conquests";
     char exe_full[MAX_PATH], gd[MAX_PATH];
-    int run = 0;
+    int run = 0, original = 0;
     for (int i = 1; i < argc; i++) {
         int n = recomp_trace_arg(argc, argv, i);
         if (!n) n = record_arg(argc, argv, i);
@@ -277,6 +313,8 @@ int main(int argc, char** argv) {
         if (n) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = 1;
+        else if (!strcmp(argv[i], "--nosteam")) g_nosteam = 1;
+        else if (!strcmp(argv[i], "--original")) original = 1;
         else if (!strcmp(argv[i], "--probe") && i + 1 < argc && g_nprobe < MAX_PROBES)
             g_probe[g_nprobe++] = strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--exe") && i + 1 < argc) exe = argv[++i];
@@ -289,7 +327,7 @@ int main(int argc, char** argv) {
             printf("usage: civ3 [--run] [--headless] [--record out.mp4] [--frames N] [--fps N]\n"
                    "            [--move x,y@s] [--click x,y@s] [--key vk@s]\n"
                    "            [--exe work\\Civ3Conquests.exe] [--game game\\Conquests]\n"
-                   "            [--watchdog S] [--play S] [--probe VA] [--native-trace] [--callbacks]\n");
+                   "            [--original] [--nosteam] [--watchdog S] [--play S] [--probe VA] [--native-trace] [--callbacks]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
         }
@@ -312,6 +350,13 @@ int main(int argc, char** argv) {
     /* The game's DLLs (jgl, sound, binkw32, steam_api...) sit beside the guest
      * exe, and native32_bind loads them with LoadLibrary. */
     SetDllDirectoryA(gd);
+    if (original) {
+        /* The shipping machine code as the reference (oracle.c). No fault
+         * handler: the original's own SEH may handle access violations. */
+        if (!run) { printf("(--original needs --run)\n"); return 1; }
+        if (!SetCurrentDirectoryA(gd)) { fprintf(stderr, "cannot enter %s\n", gd); return 1; }
+        return oracle_run(exe_full, g_guest_exe, g_guest_cmdline, g_headless, g_nosteam, start_threads);
+    }
     native32_init();
     AddVectoredExceptionHandler(0, crash);
     printf("Civilization III: Conquests recomp host\n  lifted functions in dispatch: %u\n",
@@ -320,10 +365,11 @@ int main(int argc, char** argv) {
     uint32_t span = native32_map(exe_full, CIV3_IMAGE_BASE);
     if (!span) { fprintf(stderr, "cannot map %s at 0x%08X\n", exe_full, CIV3_IMAGE_BASE); return 1; }
     printf("  mapped %s: 0x%08X-0x%08X\n", exe, CIV3_IMAGE_BASE, CIV3_IMAGE_BASE + span);
-    int bad = g_headless
-        ? native32_bind(CIV3_IMAGE_BASE, g_headless_shims, (int)(sizeof g_headless_shims / sizeof g_headless_shims[0]))
-        : native32_bind(CIV3_IMAGE_BASE, g_shims, (int)(sizeof g_shims / sizeof g_shims[0]));
-    if (bad) return 1;
+    native32_shim_t shims[64];
+    int ns = g_headless ? (int)(sizeof g_headless_shims / sizeof *shims) : (int)(sizeof g_shims / sizeof *shims);
+    memcpy(shims, g_headless ? g_headless_shims : g_shims, ns * sizeof *shims);
+    if (g_nosteam) shims[ns++] = (native32_shim_t){ "SteamAPI_Init", shim_SteamAPI_Init };
+    if (native32_bind(CIV3_IMAGE_BASE, shims, ns)) return 1;
     printf("  guest exe %s\n", g_guest_exe);
 
     if (!run) {

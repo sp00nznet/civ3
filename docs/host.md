@@ -35,6 +35,7 @@ on the lifted function.
 | `GetModuleFileNameA`, `GetModuleHandleA(NULL)`, `GetCommandLineA` | The game is `game\Conquests\Civ3Conquests.exe`, not `build\civ3.exe`. It finds `..\Art`, `Text\` and the `.biq` rules relative to its own path, and its `hInstance` must be the guest image. The folder is passed in 8.3 form because the game's path buffers are fixed-size ([bringup.md, 6](bringup.md#6-from-a-deep-folder-loads-draws-nothing-spins)) |
 | `LoadLibraryA` | `jgl.dll` and `sound.dll` are loaded by name at run time; each one is passed to `record_hook_module` as it loads |
 | `CreateWindowExA` | Records the top-level window; strips `WS_VISIBLE` under `--headless` |
+| `GetKeyState`, `GetAsyncKeyState` | A scripted run answers Ctrl, Shift and Alt from the script (`--key c+0x53`), not the console's keyboard ([testing.md](testing.md)) |
 
 Headless adds `MessageBoxA` (to stderr) and `ShowWindow` (no-op).
 
