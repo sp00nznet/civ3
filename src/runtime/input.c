@@ -82,8 +82,29 @@ BOOL WINAPI input_GetCursorPos(POINT* p) {
  * imports; host.c and oracle.c route them here). A scripted run answers from
  * the script, so the console's real keyboard never leaks into a test. */
 static volatile LONG g_mods, g_lb_reads;
+/* The presenter's mouse: where jgl's GetCursorPos finds the cursor. The
+ * keyboard is the real one then, read as it is (GetAsyncKeyState): the
+ * game's thread only ever gets posted keys, which GetKeyState does not see. */
+static volatile LONG g_live;
+void input_live_cursor(int x, int y) {
+    InterlockedExchange(&g_live, 1);
+    InterlockedExchange(&g_cx, x);
+    InterlockedExchange(&g_cy, y);
+}
+
+/* The cursor the game set, for the presenter's window: SetCursor on its
+ * own hidden window shows nothing. */
+static HCURSOR g_game_cursor;
+static volatile LONG g_cursor_count;     /* ShowCursor's count, as Windows keeps it */
+void input_set_cursor(HCURSOR c) { g_game_cursor = c; }
+int input_show_cursor(int show) { return show ? InterlockedIncrement(&g_cursor_count) : InterlockedDecrement(&g_cursor_count); }
+HCURSOR input_game_cursor(void) {
+    if (g_cursor_count < 0) return NULL;
+    return g_game_cursor ? g_game_cursor : LoadCursorA(NULL, IDC_ARROW);
+}
+
 SHORT input_key_state(int vk) {
-    if (!g_nev) return GetKeyState(vk);
+    if (!g_nev) return g_live ? GetAsyncKeyState(vk) : GetKeyState(vk);
     if (vk == VK_LBUTTON) InterlockedIncrement(&g_lb_reads);
     int bit = vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL ? 1
             : vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT ? 2

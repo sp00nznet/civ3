@@ -10,6 +10,9 @@ int  record_changed(int snapshot);               /* per mille of pixels changed 
 
 /* Patch a native module's imports for headless and capture (LoadLibraryA hook). */
 void record_hook_module(HMODULE m, int headless);
+void record_present(void);                       /* the presenter shows the game: run it hidden, keep the shadow */
+int  record_frame(uint32_t** buf, size_t* cap, int* w, int* h);   /* the shadow, for the presenter */
+void record_blit32(const uint32_t* px, int w, int h, int x, int y);   /* a movie frame into the shadow */
 
 extern HWND g_game_hwnd;
 extern volatile LONG g_blits;
@@ -21,3 +24,7 @@ int  input_arg(int argc, char** argv, int i);
 void input_start(void);
 BOOL WINAPI input_GetCursorPos(POINT* p);
 SHORT input_key_state(int vk);                   /* GetKeyState/GetAsyncKeyState for the guest */
+void  input_live_cursor(int x, int y);           /* the presenter's mouse, in game pixels */
+HCURSOR input_game_cursor(void);                 /* the cursor the game set, NULL while it hides it */
+void  input_set_cursor(HCURSOR c);               /* the game's SetCursor and ShowCursor (host.c) */
+int   input_show_cursor(int show);

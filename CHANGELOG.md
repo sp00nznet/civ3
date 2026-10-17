@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- The presenter (`src/runtime/present.c`, the default for `--run`): the
+  game's picture in a Direct3D 11 window, scaled (F12), fullscreen (F11),
+  with a settings menu (F10) that also sets the game's resolution; the game
+  runs hidden as it does headless. `--classic` for the game's own window.
+  The intro and the wonder movies play in it and headless: Bink's buffer is
+  the host's, in memory, so headless runs no longer touch DirectDraw.
 - Native Linux host (`src/linux`, `build-linux.sh`) on pcrecomp's
   `win32hle`: no Wine. `run_lift.py --module jgl|sound` lifts the renderer
   and audio DLLs too, which Linux cannot run as themselves. Plays the intro,

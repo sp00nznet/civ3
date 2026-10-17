@@ -23,6 +23,7 @@
 #include "native32.h"
 #include "recomp_trace.h"
 #include "record.h"
+#include "present.h"
 
 extern const uint32_t civ3_entry_va;   /* recomp_dispatch.c */
 int oracle_run(const char* exe_full, const char* guest_exe, const char* cmdline, int headless, int nosteam,
@@ -31,7 +32,8 @@ int oracle_run(const char* exe_full, const char* guest_exe, const char* cmdline,
 #define CIV3_IMAGE_BASE 0x00400000u
 
 static DWORD g_watchdog_s, g_play_s;
-static int   g_headless;
+static int   g_headless, g_classic, g_present_mode = -1, g_present_full = -1;
+static int   g_presenting;              /* the presenter (present.c): not --headless, not --classic */
 
 #define ARG(n) MEM32(g_esp + 4 + 4 * (n))
 static const char* gstr(uint32_t va) { return va ? (const char*)(uintptr_t)va : "(null)"; }
@@ -93,7 +95,7 @@ HWND g_game_hwnd;
 
 static void shim_CreateWindowExA(void) {
     DWORD style = ARG(3);
-    if (g_headless) style &= ~WS_VISIBLE;
+    if (g_headless || g_presenting) style &= ~WS_VISIBLE;
     HWND h = CreateWindowExA(ARG(0), (LPCSTR)(uintptr_t)ARG(1), (LPCSTR)(uintptr_t)ARG(2),
                              style, (int)ARG(4), (int)ARG(5), (int)ARG(6),
                              (int)ARG(7), (HWND)(uintptr_t)ARG(8), (HMENU)(uintptr_t)ARG(9),
@@ -166,6 +168,73 @@ static void shim_SteamAPI_Init(void) {
 static void shim_GetKeyState(void) {
     g_eax = (uint32_t)(int32_t)input_key_state((int)ARG(0));
     g_esp += 4 + 1 * 4;
+}
+
+/* Presenting, the game's window is hidden and the player's is ours: the
+ * cursor it sets is shown there (input.c), a message box sits over ours,
+ * and the cursor is never clipped to the hidden window. */
+static void shim_SetCursor(void) {
+    HCURSOR c = (HCURSOR)(uintptr_t)ARG(0);
+    g_eax = (uint32_t)(uintptr_t)SetCursor(c);
+    input_set_cursor(c);
+    g_esp += 4 + 1 * 4;
+}
+static void shim_ShowCursor(void) {
+    g_eax = (uint32_t)input_show_cursor((int)ARG(0));
+    g_esp += 4 + 1 * 4;
+}
+static void shim_ClipCursor(void) {
+    g_eax = 1;
+    g_esp += 4 + 1 * 4;
+}
+static void shim_MessageBoxA_present(void) {
+    g_eax = (uint32_t)MessageBoxA(present_hwnd(), (LPCSTR)(uintptr_t)ARG(1), (LPCSTR)(uintptr_t)ARG(2), ARG(3));
+    g_esp += 4 + 4 * 4;
+}
+
+/* The movies, hidden window or not. binkw32's BinkBuffer draws the frame to
+ * the game's window itself, through DirectDraw: hidden, nothing shows (the
+ * presenter's window stayed black for the 94 s intro), and headless over RDP
+ * it faulted in BinkBufferOpen in waves. So, presenting or headless, the
+ * buffer is ours: memory at 32 bits that the real BinkCopyToBuffer decodes
+ * into, and BinkBufferBlit copies it into the shadow (record.c), which the
+ * presenter shows and --record records. The leading fields are Bink's
+ * BINKBUFFER, which the game reads. */
+typedef struct {
+    uint32_t Width, Height, WindowWidth, WindowHeight, SurfaceType, Buffer;
+    int32_t BufferPitch;
+    uint32_t ClientOffsetX, ClientOffsetY, ScreenWidth, ScreenHeight, ScreenDepth;
+    uint32_t pad[48];
+    int destx, desty;                                    /* ours */
+} binkbuf_t;
+static void shim_BinkBufferOpen(void) {                  /* (hwnd, width, height, flags) */
+    binkbuf_t* b = (binkbuf_t*)calloc(1, sizeof *b);
+    b->Width = b->WindowWidth = ARG(1), b->Height = b->WindowHeight = ARG(2);
+    b->SurfaceType = 3;                                  /* BINKSURFACE32 */
+    b->BufferPitch = (int32_t)(b->Width * 4);
+    b->Buffer = (uint32_t)(uintptr_t)calloc((size_t)b->Width * b->Height + 1, 4);
+    b->ScreenWidth = GetSystemMetrics(SM_CXSCREEN), b->ScreenHeight = GetSystemMetrics(SM_CYSCREEN), b->ScreenDepth = 32;
+    fprintf(stderr, "[bink] buffer %ux%u, drawn into the shadow\n", b->Width, b->Height);
+    g_eax = (uint32_t)(uintptr_t)b;
+    g_esp += 4 + 4 * 4;
+}
+static void shim_BinkBufferClose(void) {
+    binkbuf_t* b = (binkbuf_t*)(uintptr_t)ARG(0);
+    if (b) free((void*)(uintptr_t)b->Buffer), free(b);
+    g_esp += 4 + 1 * 4;
+}
+static void shim_BinkBufferLock(void) { g_eax = ARG(0) != 0; g_esp += 4 + 1 * 4; }
+static void shim_BinkBufferUnlock(void) { g_eax = 1; g_esp += 4 + 1 * 4; }
+static void shim_BinkBufferSetOffset(void) {             /* (buf, x, y) */
+    binkbuf_t* b = (binkbuf_t*)(uintptr_t)ARG(0);
+    if (b) b->destx = (int)ARG(1), b->desty = (int)ARG(2);
+    g_eax = 1;
+    g_esp += 4 + 3 * 4;
+}
+static void shim_BinkBufferBlit(void) {                  /* (buf, rects, n): the whole frame */
+    binkbuf_t* b = (binkbuf_t*)(uintptr_t)ARG(0);
+    if (b) record_blit32((const uint32_t*)(uintptr_t)b->Buffer, (int)b->Width, (int)b->Height, b->destx, b->desty);
+    g_esp += 4 + 3 * 4;
 }
 
 #define GUEST_SHIMS \
@@ -313,6 +382,9 @@ int main(int argc, char** argv) {
         if (n) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = 1;
+        else if (!strcmp(argv[i], "--classic")) g_classic = 1;
+        else if (!strcmp(argv[i], "--fullscreen")) g_present_full = 1;
+        else if (!strcmp(argv[i], "--scale") && i + 1 < argc) g_present_mode = present_mode_from_name(argv[++i]);
         else if (!strcmp(argv[i], "--nosteam")) g_nosteam = 1;
         else if (!strcmp(argv[i], "--original")) original = 1;
         else if (!strcmp(argv[i], "--probe") && i + 1 < argc && g_nprobe < MAX_PROBES)
@@ -324,7 +396,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--native-trace")) native32_trace_native = 1;
         else if (!strcmp(argv[i], "--callbacks")) native32_trace_callbacks = 1;
         else {
-            printf("usage: civ3 [--run] [--headless] [--record out.mp4] [--frames N] [--fps N]\n"
+            printf("usage: civ3 [--run] [--headless | --classic] [--fullscreen] [--scale sharp|smooth|crt|nearest|integer]\n"
+                   "            [--record out.mp4] [--frames N] [--fps N]\n"
                    "            [--move x,y@s] [--click x,y@s] [--key vk@s]\n"
                    "            [--exe work\\Civ3Conquests.exe] [--game game\\Conquests]\n"
                    "            [--original] [--nosteam] [--watchdog S] [--play S] [--probe VA] [--native-trace] [--callbacks]\n");
@@ -344,6 +417,10 @@ int main(int argc, char** argv) {
         if (n && n < MAX_PATH) strcpy(gd, sh);
     }
     record_resolve_path();             /* the run chdirs into the game folder */
+    /* The game in our own window (present.c), unless headless or --classic,
+     * which is the game's own window and display-mode switch. */
+    g_presenting = run && !g_headless && !g_classic && !original;
+    if (g_presenting) record_present();
     _snprintf(g_guest_exe, sizeof g_guest_exe - 1, "%s\\Civ3Conquests.exe", gd);
     _snprintf(g_guest_cmdline, sizeof g_guest_cmdline - 1, "\"%s\"", g_guest_exe);
 
@@ -369,6 +446,21 @@ int main(int argc, char** argv) {
     int ns = g_headless ? (int)(sizeof g_headless_shims / sizeof *shims) : (int)(sizeof g_shims / sizeof *shims);
     memcpy(shims, g_headless ? g_headless_shims : g_shims, ns * sizeof *shims);
     if (g_nosteam) shims[ns++] = (native32_shim_t){ "SteamAPI_Init", shim_SteamAPI_Init };
+    if (g_presenting || g_headless) {
+        shims[ns++] = (native32_shim_t){ "_BinkBufferOpen@16", shim_BinkBufferOpen };
+        shims[ns++] = (native32_shim_t){ "_BinkBufferClose@4", shim_BinkBufferClose };
+        shims[ns++] = (native32_shim_t){ "_BinkBufferLock@4", shim_BinkBufferLock };
+        shims[ns++] = (native32_shim_t){ "_BinkBufferUnlock@4", shim_BinkBufferUnlock };
+        shims[ns++] = (native32_shim_t){ "_BinkBufferSetOffset@12", shim_BinkBufferSetOffset };
+        shims[ns++] = (native32_shim_t){ "_BinkBufferBlit@12", shim_BinkBufferBlit };
+    }
+    if (g_presenting) {
+        shims[ns++] = (native32_shim_t){ "SetCursor", shim_SetCursor };
+        shims[ns++] = (native32_shim_t){ "ShowCursor", shim_ShowCursor };
+        shims[ns++] = (native32_shim_t){ "ClipCursor", shim_ClipCursor };
+        shims[ns++] = (native32_shim_t){ "MessageBoxA", shim_MessageBoxA_present };
+        shims[ns++] = (native32_shim_t){ "ShowWindow", shim_ShowWindow };
+    }
     if (native32_bind(CIV3_IMAGE_BASE, shims, ns)) return 1;
     printf("  guest exe %s\n", g_guest_exe);
 
@@ -380,6 +472,7 @@ int main(int argc, char** argv) {
     if (g_watchdog_s || g_play_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
     record_start();
     input_start();
+    if (g_presenting) present_start(g_present_mode, g_present_full);
     printf("  entering 0x%08X\n\n", civ3_entry_va);
     fflush(stdout);
     native32_call_guest(civ3_entry_va, 0, NULL);

@@ -45,9 +45,9 @@ locally.
 | New Game (all 31 civilizations), Quick Start, Load Game, Conquests! scenarios (all 12) | work (scripted headless runs, each played on by the autopilot) |
 | In game: advisors F1-F11, Save, Load, Preferences, Civilopedia, Government, Retire, Quit, New Game, the menu buttons | work: each screen opens, closes, and the game plays 5 more turns |
 | Same game as the original | yes: the lifted build and the original machine code reach the same game state every turn (`tools/oracle.py`) |
-| Higher resolutions | 1280x1024 works (`KeepRes=1` and `Video Mode=1280` in `conquests.ini`, below). The desktop's own size (`KeepRes=1` alone) needs a host fix that is written but untested |
-| Intro and wonder movies (Bink) | play on a real display. Headless over RDP the intro faulted in `BinkBufferOpen` in waves, so the test runs set `PlayIntro=0` |
-| Windowed/full-screen play at the console | not tested yet: every run so far was headless over RDP |
+| Higher resolutions | 1280x1024 works (`KeepRes=1` and `Video Mode=1280` in `conquests.ini`, below; the presenter's F10 menu sets them). The desktop's own size (`KeepRes=1` alone) needs a host fix that is written but untested |
+| Intro and wonder movies (Bink) | play, in the presenter and headless: the host keeps Bink's picture in memory and shows or records it, so Bink's own DirectDraw output (which faulted headless over RDP) is not used. `--classic` plays them as the game did |
+| The presenter | the game in its own Direct3D 11 window: resizable, borderless fullscreen (F11), sharp scaling (F12), settings (F10) including the game's resolution. Its input path is tested (Esc through the intro, a click into Quick Start); played at the console, not yet |
 | Linux, native | plays: intro, menus, music, Quick Start, turns; text pixel-close to Windows. Not on Linux yet: `--original`, the play-test suite, multiplayer ([linux.md](docs/linux.md)) |
 | Multiplayer, force feedback | not tested |
 
@@ -213,7 +213,8 @@ prompt (`build.cmd` exists to pick the `amd64_x86` compiler; the host must be
 From the repository root:
 
 ```
-build\civ3.exe --run                                                  # a window (untested: every run so far was headless)
+build\civ3.exe --run                                                  # in the presenter (F10 settings, F11 fullscreen, F12 scaling)
+build\civ3.exe --run --classic                                        # the game's own window and display-mode switch, as it shipped
 build\civ3.exe --headless --run --watchdog 120                        # boot, report, stop
 build\civ3.exe --headless --run --record work\boot.mp4 --watchdog 200 # record to the main menu
 build\civ3.exe --headless --run --record work\qs.mp4 --watchdog 200 --move 240,383@6 --open 240,383@8
@@ -222,6 +223,16 @@ build\civ3.exe --help                                                 # every op
 py -3 tools\playtest.py --list                                        # the scripted play tests
 py -3 tools\oracle.py                                                 # lifted vs original, turn by turn
 ```
+
+`--run` shows the game in the presenter: our own window, which the game's
+picture is scaled into (sharp-bilinear by default; smooth, CRT, nearest and
+whole multiples on F12), resizable, borderless fullscreen on F11 or
+Alt+Enter, and a settings menu on F10 or a right-click beside the picture,
+where the game's resolution is chosen for its next start. It remembers
+them in `build\civ3.ini`. The game itself runs as it does headless, its own
+window hidden and its display never switched; `--classic` gives the game its
+own window and full-screen mode switch instead. `--scale NAME` and
+`--fullscreen` override the remembered settings.
 
 `--headless` keeps everything off the screen (a hidden window, display-mode
 changes ignored, message boxes to stderr), so it is safe over RDP. `--record`
@@ -268,6 +279,7 @@ civ3/
   src/runtime/record.c  jgl.dll hooks: 16-bit colour shim, headless, --record
   src/runtime/input.c   scripted input, [game] milestones, --peek
   src/runtime/oracle.c  --original: the shipping machine code, run natively as the reference
+  src/runtime/present.c the presenter: the game's picture in a Direct3D 11 window
   src/linux/         the native Linux host on pcrecomp runtime/win32hle (build-linux.sh)
   src/recomp/gen/    lifted C (generated, gitignored, never committed)
   src/recomp/gen_jgl/, gen_sound/   jgl.dll and sound.dll lifted, for Linux (generated)

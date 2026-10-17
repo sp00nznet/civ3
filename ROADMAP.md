@@ -14,8 +14,6 @@
 
 ## Later
 
-- Replace the `native32` bridge for jgl.dll with an SDL2 or D3D presenter, so
-  scaling and windowed mode stop depending on 1990s GDI mode switching.
 - The 59 bodies with no terminator: check each against the catalog (the
   last two unresolvable `ITAIL` labels went with the current pcrecomp's lift).
 - Play the Hall of Fame, scenarios and saves from the 2001 original and

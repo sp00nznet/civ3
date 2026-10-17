@@ -64,6 +64,28 @@ The run that found it, with `--native-trace`, ended:
 
 `sub_005786F0` is WinMain; `jgl+0x3B4A0` is the mode lookup.
 
+## The presenter
+
+`--run` (not `--headless`, not `--classic`) shows the game in our own window
+(`src/runtime/present.c`, Red Alert 2's presenter with its RA2-only parts
+left out). The game runs exactly as it does headless, below: its window
+hidden, its display modes a fixed list and never switched, every blit jgl
+makes to its window also kept in the shadow bitmap. The presenter copies the
+shadow when the game has blitted, scales it into its client area through a
+shader, and posts the player's mouse (in game pixels: jgl's `GetCursorPos`
+answers the same point) and keys to the game's window. The game's
+`SetCursor` and `ShowCursor` decide the presenter's cursor; `ClipCursor` is
+ignored (it would hold the real cursor to the hidden window); message boxes
+are owned by the presenter's window. `WM_ACTIVATEAPP` follows the
+presenter's activation.
+
+Bink presents through its own `BinkBuffer`, to the game's window by
+DirectDraw: hidden, that shows nothing, and headless over RDP it faulted in
+`BinkBufferOpen`. Presenting or headless, the exe's `BinkBuffer*` imports are
+the host's (host.c): a 32-bit buffer in memory that the real
+`BinkCopyToBuffer` decodes into, copied into the shadow on
+`BinkBufferBlit`.
+
 ## Headless and `--record`
 
 jgl, not the game, creates the window, switches the display mode and presents

@@ -80,8 +80,13 @@ static int is_game_dc(HDC dc) {
     return game;
 }
 
+/* The presenter (present.c) shows the shadow: the game runs as it does
+ * headless, its window hidden, and the shadow is what there is to see. */
+static int g_presenting;
+void record_present(void) { g_presenting = 1; }
+
 static void shadow_size(void) {
-    if (!g_record) return;
+    if (!g_record && !g_presenting) return;
     RECT r;
     if (GetClientRect(g_game_hwnd, &r)) shadow_ensure(r.right, r.bottom);
 }
@@ -243,17 +248,18 @@ static int iat_patch(HMODULE m, const char* name, void* fn) {
 }
 
 void record_hook_module(HMODULE m, int headless) {
-    g_headless_display = headless;
+    int hide = headless || g_presenting;   /* the presenter's window is the one shown */
+    g_headless_display = hide;
     iat_patch(m, "EnumDisplaySettingsA", (void*)hk_EnumDisplaySettingsA);
     iat_patch(m, "ChangeDisplaySettingsA", (void*)hk_ChangeDisplaySettingsA);
-    if (g_record || headless) {        /* headless counts frames: input.c starts on the first */
+    if (g_record || hide) {            /* headless counts frames: input.c starts on the first */
         iat_patch(m, "BitBlt", (void*)hk_BitBlt);
         iat_patch(m, "StretchBlt", (void*)hk_StretchBlt);
     }
-    if (headless) {
+    if (headless) iat_patch(m, "MessageBoxA", (void*)hk_MessageBoxA);
+    if (hide) {
         iat_patch(m, "CreateWindowExA", (void*)hk_CreateWindowExA);
         iat_patch(m, "ShowWindow", (void*)hk_ShowWindow);
-        iat_patch(m, "MessageBoxA", (void*)hk_MessageBoxA);
         iat_patch(m, "InvalidateRect", (void*)hk_InvalidateRect);
         iat_patch(m, "BeginPaint", (void*)hk_BeginPaint);
         iat_patch(m, "GetCursorPos", (void*)input_GetCursorPos);
@@ -340,6 +346,46 @@ static DWORD WINAPI recorder(LPVOID unused) {
             TerminateProcess(GetCurrentProcess(), 0);
         }
     }
+}
+
+/* A 32-bit picture (a movie frame, host.c) into the shadow at x, y. */
+void record_blit32(const uint32_t* px, int w, int h, int x, int y) {
+    EnterCriticalSection(&g_lock);
+    shadow_size();
+    if (g_shadow_bits) {
+        GdiFlush();
+        for (int j = 0; j < h; j++) {
+            int ty = y + j;
+            if (ty < 0 || ty >= g_h) continue;
+            for (int i = 0; i < w; i++) {
+                int tx = x + i;
+                if (tx >= 0 && tx < g_w) ((uint32_t*)g_shadow_bits)[(size_t)ty * g_w + tx] = px[(size_t)j * w + i];
+            }
+        }
+    }
+    LeaveCriticalSection(&g_lock);
+    InterlockedIncrement(&g_blits);
+}
+
+/* The shadow, for the presenter: copied into *buf (grown to fit, *cap
+ * pixels), its size in *w, *h. 0 before the game has blitted anything. */
+int record_frame(uint32_t** buf, size_t* cap, int* w, int* h) {
+    int ok = 0;
+    EnterCriticalSection(&g_lock);
+    if (g_shadow_bits) {
+        size_t n = (size_t)g_w * g_h;
+        if (n > *cap) {
+            uint32_t* grown = (uint32_t*)realloc(*buf, n * 4);
+            if (grown) *buf = grown, *cap = n;
+        }
+        if (n <= *cap) {
+            GdiFlush();
+            memcpy(*buf, g_shadow_bits, n * 4);
+            *w = g_w, *h = g_h, ok = 1;
+        }
+    }
+    LeaveCriticalSection(&g_lock);
+    return ok;
 }
 
 void record_start(void) {
