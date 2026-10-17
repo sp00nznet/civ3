@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Native Linux host (`src/linux`, `build-linux.sh`) on pcrecomp's
+  `win32hle`: no Wine. `run_lift.py --module jgl|sound` lifts the renderer
+  and audio DLLs too, which Linux cannot run as themselves. Plays the intro,
+  the menus, the music, Quick Start and 60 turns, in a window or headless
+  ([docs/linux.md](docs/linux.md)).
 - Reconnaissance of the Steam `Civ3Conquests.exe`: VC6, no DRM, 245 imports
   from 13 DLLs, renderer in `jgl.dll` ([docs/RECON.md](docs/RECON.md)).
 - Function catalog seeded from `vtable_scan` (no RTTI): 15,308 functions,

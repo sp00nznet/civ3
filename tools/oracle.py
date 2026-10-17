@@ -20,6 +20,7 @@ in both runs of each build, and it is not part of a pointer or zero on both side
 
     py -3 tools/oracle.py                 # 600 s of play, four runs at once
     py -3 tools/oracle.py --seconds 1200
+    py -3 tools/oracle.py --jobs 2        # two at a time
     py -3 tools/oracle.py --compare       # re-read the last runs' autosaves
 
 The start save is game/Conquests/Saves/"0000 oracle.SAV" (sorted first, so the
@@ -79,13 +80,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--seconds', type=int, default=600)
     ap.add_argument('--compare', action='store_true', help='only compare the last runs')
+    ap.add_argument('--jobs', type=int, default=len(RUNS), help='runs at once (fewer on a busy machine)')
     a = ap.parse_args()
     if not os.path.exists(START):
         print('oracle: needs %s (docs/testing.md)' % START)
         return 0
     if not a.compare:
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(len(RUNS)) as ex:
+        with ThreadPoolExecutor(a.jobs) as ex:
             for name, code, bad, game in ex.map(lambda n: playtest.run(n, SCRIPT + RUNS[n], a.seconds, 5), RUNS):
                 print('%-18s exit %-7s %s%s' % (name, code, '; '.join(game) or '-',
                                                 ('  !! ' + ' | '.join(bad[:3])) if bad else ''))

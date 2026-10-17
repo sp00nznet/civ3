@@ -2,7 +2,9 @@
 
 A static recompilation of **Sid Meier's Civilization III: Conquests**
 (Firaxis, 2003; the 2015 Steam "Complete" build) from the shipping Win32
-executable to C, compiled fresh and run natively on modern Windows.
+executable to C, compiled fresh and run natively on modern Windows, and on
+Linux as a native program with no Wine: the first Linux Civilization III
+([Linux, native](#linux-native)).
 
 ![Quick Start, found Rome, end the first turn: the recompiled game, recorded headlessly](docs/screenshots/hero.gif)
 
@@ -32,6 +34,7 @@ locally.
 | Scripted input | `--move`, `--click`, `--key`: mouse and keyboard as posted window messages |
 | Conformance harness | `tools/conformance.py`: **7/7 milestones**, through a scripted Quick Start into a game; lift health; fails on regression |
 | Differential test | `tools/oracle.py`: the same host runs the original machine code (`--original`) next to the lifted C from one save. **The same game state every turn for 19 turns** (3900 to 2950 BC, the AI moving every civ) ([testing.md](docs/testing.md)) |
+| Native Linux (`build-linux/civ3`, pcrecomp `win32hle`) | **plays**: the intro movie, the main menu, music and sound, Quick Start into a game and 60 turns on the autopilot, in a window or headless; jgl.dll and sound.dll lifted too ([linux.md](docs/linux.md)) |
 | Play tests | `tools/playtest.py`: 100 scripted cases with pass/fail verdicts: every main-menu item and the way back, every in-game screen by hotkey and button followed by 5 turns, New Game as all 31 civs, all 12 Conquests scenarios ([testing.md](docs/testing.md)) |
 
 ### Compatibility
@@ -45,6 +48,7 @@ locally.
 | Higher resolutions | 1280x1024 works (`KeepRes=1` and `Video Mode=1280` in `conquests.ini`, below). The desktop's own size (`KeepRes=1` alone) needs a host fix that is written but untested |
 | Intro and wonder movies (Bink) | play on a real display. Headless over RDP the intro faulted in `BinkBufferOpen` in waves, so the test runs set `PlayIntro=0` |
 | Windowed/full-screen play at the console | not tested yet: every run so far was headless over RDP |
+| Linux, native | plays: intro, menus, music, Quick Start, turns; text pixel-close to Windows. Not on Linux yet: `--original`, the play-test suite, multiplayer ([linux.md](docs/linux.md)) |
 | Multiplayer, force feedback | not tested |
 
 ### Resolution
@@ -154,6 +158,49 @@ some-folder\
    Expected: `[bind] 0x00400000: 238 native, 0 guest, 7 shimmed, 0 unresolved`,
    then `(dry run: image mapped and bound; --run enters 0x0066B0A9)`.
 
+### Linux, native
+
+`build-linux/civ3` is a 32-bit Linux program: the same lifted C as the
+Windows build, on pcrecomp's `runtime/win32hle`, which answers every Windows
+call the game makes itself (files, windows, GDI text and blits, DirectSound
+on SDL2, the Bink movies and the MP3 music on ffmpeg). On Windows the
+game's renderer and sound DLLs run as themselves; Linux cannot run their
+machine code, so `jgl.dll` and `sound.dll` are lifted too. The game folder is
+only data. [linux.md](docs/linux.md) has how it fits together.
+
+On Debian or Ubuntu:
+
+```
+sudo dpkg --add-architecture i386 && sudo apt update
+sudo apt install gcc-multilib cmake ninja-build pkg-config python3:native python3-pefile python3-capstone fonts-liberation \
+                 libsdl2-dev:i386 libsdl2-ttf-dev:i386 libavformat-dev:i386 libavcodec-dev:i386 libswresample-dev:i386 libavutil-dev:i386
+```
+
+`python3:native` is there because, without it, Ubuntu 24.04's apt met a
+Python dependency of the i386 libraries by swapping the system's 64-bit
+`python3` for the i386 one, and removed `ubuntu-wsl`,
+`software-properties-common` and other Python tools with it. Read what apt
+says it will remove before answering: if `python3` is on that list, answer no.
+
+Then *Step by step* above with `python3` for `py -3` and your Steam
+library's `Sid Meier's Civilization III Complete` copied (or linked) as
+`game/`, plus the two DLL lifts after step 5 (seconds each):
+
+```
+python3 run_lift.py --all --module jgl
+python3 run_lift.py --all --module sound
+./build-linux.sh
+build-linux/civ3 --run
+```
+
+`run_lift.py --module` copies the DLL from `game/Conquests` into `work/`
+first (sound.dll moved to 0x10080000, off jgl's base). The window scales the
+4:3 picture to its size (F12 cycles sharp, smooth, CRT, nearest and integer
+scaling, F11 is fullscreen). `--headless`, `--record`, `--watchdog`,
+`--play` and the scripted input are the Windows host's; `--shot out.ppm`
+writes the screen when the watchdog ends a run. It needs the pcrecomp
+`win32hle` changes from Civilization III's bring-up.
+
 The usual trip-ups: `python` opening the Microsoft Store (that is Windows'
 alias placeholder; use `py -3`, or turn the alias off in *Settings > Apps >
 Advanced app settings > App execution aliases*); a freshly installed tool not
@@ -202,7 +249,7 @@ boot milestones: 7/7  (exit 4)
   [x] first frame presented
   [x] main menu open
   [x] Quick Start taken, in a game
-lift: 15929 functions, 0 errors, 59 with no terminator, 2 unresolvable ITAIL labels
+lift: 15929 functions, 0 errors, 59 with no terminator, 0 unresolvable ITAIL labels
 ```
 
 Without `game\` and a build it skips with a message, so it can run in CI.
@@ -221,11 +268,13 @@ civ3/
   src/runtime/record.c  jgl.dll hooks: 16-bit colour shim, headless, --record
   src/runtime/input.c   scripted input, [game] milestones, --peek
   src/runtime/oracle.c  --original: the shipping machine code, run natively as the reference
+  src/linux/         the native Linux host on pcrecomp runtime/win32hle (build-linux.sh)
   src/recomp/gen/    lifted C (generated, gitignored, never committed)
+  src/recomp/gen_jgl/, gen_sound/   jgl.dll and sound.dll lifted, for Linux (generated)
   tools/conformance.py  the boot/lift harness; conformance.json is its baseline
   tools/playtest.py     the scripted play tests
   tools/oracle.py       lifted vs original, save by save
-  docs/              RECON.md, host.md, bringup.md, testing.md
+  docs/              RECON.md, host.md, bringup.md, testing.md, linux.md
   game/              your install (gitignored)
   work/              executable copy, catalog, logs, recordings (gitignored)
 ```

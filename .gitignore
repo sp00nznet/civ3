@@ -69,3 +69,9 @@ Desktop.ini
 # Setup output
 Civ3 Recomp.cmd
 build-trace/
+
+# Linux: the DLL lifts and the native build
+src/recomp/gen_jgl/
+src/recomp/gen_sound/
+build-linux
+build-*/

@@ -1,2 +1,4 @@
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+# Shell scripts run under WSL from a Windows checkout too
+*.sh text eol=lf

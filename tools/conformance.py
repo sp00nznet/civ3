@@ -65,7 +65,7 @@ def boot(seconds):
 
 def lift_health():
     stats = json.load(open(os.path.join(ROOT, 'work', 'lift_stats.json')))
-    disp = set(re.findall(r'\{ 0x([0-9A-F]{8})u,', open(os.path.join(GEN, 'recomp_dispatch.c')).read()))
+    disp = set(re.findall(r'\{ 0x([0-9A-F]{8})u,', open(os.path.join(GEN, 'recomp_dispatch.inc')).read()))
     unresolved = sum(1 for fn in glob.glob(os.path.join(GEN, 'recomp_0*.c'))
                      for t in re.findall(r'L_([0-9A-F]{8}): RECOMP_ITAIL', open(fn).read())
                      if t not in disp)

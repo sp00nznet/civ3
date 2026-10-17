@@ -30,7 +30,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HOST = os.path.join(ROOT, 'build', 'civ3.exe')
+# The native Linux build when this is Linux (README, Linux, native).
+HOST = os.path.join(ROOT, 'build-linux', 'civ3') if sys.platform.startswith('linux') else os.path.join(ROOT, 'build', 'civ3.exe')
 OUT = os.path.join(ROOT, 'work', 'tests')
 
 # Main menu items, 1024x768 client pixels, clicked at x=240: an item's hit box
@@ -252,7 +253,7 @@ def main():
             print('%-18s %4ds  %s' % (n, s, ' '.join(args)))
         return 0
     if not os.path.exists(HOST):
-        print('playtest: needs build/civ3.exe (README, Building from source)')
+        print('playtest: needs %s (README, Building from source)' % os.path.relpath(HOST, ROOT))
         return 0
     failed = 0
     names = [n for n in CASES if not a.cases or any(fnmatch.fnmatch(n, p) for p in a.cases)]
