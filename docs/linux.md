@@ -44,6 +44,7 @@ Each of these came from a run stopping at it; they are toolkit changes
   depths (jgl's are 16-bit 5-5-5 and 8-bit with colour tables), bottom-up
   DIBs read the right way up, clip regions clip, and `screen.c` shows the
   surface when there is no DirectDraw primary.
+- **The window surface follows a mode change**, for a DC jgl keeps.
 - **Limits.** jgl keeps a DC per surface and Civ3 makes 37 font sizes in 8
   styles: 64 DCs and 64 fonts were not enough (the loading screen's box, and
   every italic and underlined word, fell back to the system font).
@@ -66,15 +67,32 @@ Each of these came from a run stopping at it; they are toolkit changes
 ## State
 
 Plays: the Bink intro, the main menu (pixel-close to Windows, text and all),
-the menu music and sounds, Quick Start into 4000 BC, and 60 turns on the
-autopilot, headless or in a window with a real mouse (checked under Xvfb with
-xdotool).
+the music and sounds, new games, loads, saves, scenarios and turns, headless
+or in a window with a real mouse (checked under Xvfb with xdotool).
+
+`tools/playtest.py` runs `build-linux/civ3` on Linux, and every case passes:
+the 12 main-menu items, the 8 ways back from them, New Game as all 31
+civilizations, all 12 Conquests scenarios and the 37 in-game screens with 5
+turns after each (Ubuntu 24.04 under WSL2, 3 at a time). `quick-autopilot`,
+the 30-minute one, was not run. The suite found the fixes below.
 
 Not yet:
 
-- The window is not redrawn while the game loads without pumping messages
-  (the loading bar stays at its first frame until the map appears).
-- `tools/playtest.py`, `conformance.py` and `oracle.py` drive the Windows
-  host only; `--original` needs Windows.
-- Multiplayer, scenarios, the advisors and the rest of the play-test suite
-  are untried on Linux.
+- `tools/conformance.py` and `oracle.py` drive the Windows host only;
+  `--original` needs Windows.
+- Multiplayer is untried on Linux.
+
+## What the play tests found
+
+- A file named `Com...` opened as a serial port (win32hle took any name
+  starting COM or LPT for one): the credits, and WWII in the Pacific's
+  Commonwealth advisor, which the scenario then faulted on.
+- The Load dialog preselects the first save in directory order, which on
+  Linux was another save than the test's: `FindFirstFileA` now sorts as NTFS.
+- jgl keeps its window DC across the intro's mode switch, and drew into the
+  old screen: black after the intro.
+- With no sound card, DirectSound failed and sound.dll faulted on it: now a
+  silent device.
+- The MP3 stream asked sound.dll's callback for bytes past the file's end.
+- The host image ended near 0x0F000000 and the heap after it reached
+  jgl.dll's 0x10000000 in some runs: the host now links at 0x20000000.

@@ -9,8 +9,10 @@
 - A longer scripted game: several turns, a save and a load.
 - Capture the Bink intro in `--record` (binkw32 presents on its own path).
 
-- Linux: the play tests, the conformance harness and the oracle against
-  `build-linux/civ3`; redraw the window while a load runs without pumping.
+- Linux: the conformance harness and the oracle against `build-linux/civ3`
+  (the play tests already run it), and a session at a Linux desktop.
+- The presenter, played at the console (its input is tested only by posted
+  messages so far).
 
 ## Later
 

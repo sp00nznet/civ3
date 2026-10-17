@@ -34,7 +34,7 @@ locally.
 | Scripted input | `--move`, `--click`, `--key`: mouse and keyboard as posted window messages |
 | Conformance harness | `tools/conformance.py`: **7/7 milestones**, through a scripted Quick Start into a game; lift health; fails on regression |
 | Differential test | `tools/oracle.py`: the same host runs the original machine code (`--original`) next to the lifted C from one save. **The same game state every turn for 19 turns** (3900 to 2950 BC, the AI moving every civ) ([testing.md](docs/testing.md)) |
-| Native Linux (`build-linux/civ3`, pcrecomp `win32hle`) | **plays**: the intro movie, the main menu, music and sound, Quick Start into a game and 60 turns on the autopilot, in a window or headless; jgl.dll and sound.dll lifted too ([linux.md](docs/linux.md)) |
+| Native Linux (`build-linux/civ3`, pcrecomp `win32hle`) | **plays**: the intro, the menus, music and sound, new games, loads, saves, scenarios, in a window or headless; the play-test suite passes on Linux too; jgl.dll and sound.dll lifted ([linux.md](docs/linux.md)) |
 | Play tests | `tools/playtest.py`: 100 scripted cases with pass/fail verdicts: every main-menu item and the way back, every in-game screen by hotkey and button followed by 5 turns, New Game as all 31 civs, all 12 Conquests scenarios ([testing.md](docs/testing.md)) |
 
 ### Compatibility
@@ -48,7 +48,7 @@ locally.
 | Higher resolutions | 1280x1024 works (`KeepRes=1` and `Video Mode=1280` in `conquests.ini`, below; the presenter's F10 menu sets them). The desktop's own size (`KeepRes=1` alone) needs a host fix that is written but untested |
 | Intro and wonder movies (Bink) | play, in the presenter and headless: the host keeps Bink's picture in memory and shows or records it, so Bink's own DirectDraw output (which faulted headless over RDP) is not used. `--classic` plays them as the game did |
 | The presenter | the game in its own Direct3D 11 window: resizable, borderless fullscreen (F11), sharp scaling (F12), settings (F10) including the game's resolution. Its input path is tested (Esc through the intro, a click into Quick Start); played at the console, not yet |
-| Linux, native | plays: intro, menus, music, Quick Start, turns; text pixel-close to Windows. Not on Linux yet: `--original`, the play-test suite, multiplayer ([linux.md](docs/linux.md)) |
+| Linux, native | plays: every play-test case passes (menus, 31 civilizations, 12 scenarios, 37 in-game screens); text pixel-close to Windows. Not on Linux yet: `--original`, multiplayer ([linux.md](docs/linux.md)) |
 | Multiplayer, force feedback | not tested |
 
 ### Resolution
