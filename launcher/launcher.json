@@ -13,7 +13,7 @@
   },
   "sources": [{ "repo": "sp00nznet/pcrecomp", "ref": "main", "dir": "pcrecomp" }],
   "setup": {
-    "windows": ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\setup.ps1", "-Yes", "-Game", "{game}"],
+    "windows": ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/setup.ps1", "-Yes", "-Game", "{game}"],
     "default": ["bash", "setup.sh", "--yes", "--game-dir", "{game}"]
   },
   "play": "* (recomp).*"
