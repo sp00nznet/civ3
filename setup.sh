@@ -18,13 +18,15 @@ GAME_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --force) FORCE=1 ;;
+    --yes) ;;   # recomp-launcher passes it; nothing here asks
     --game-dir) GAME_ARG=$2; shift ;;
-    *) echo "usage: ./setup.sh [--game-dir DIR] [--force]" >&2; exit 2 ;;
+    *) echo "usage: ./setup.sh [--game-dir DIR] [--force] [--yes]" >&2; exit 2 ;;
   esac
   shift
 done
 say()  { printf '%s\n' "$*"; }
-step() { printf '\n\033[36m%s\033[0m\n' "$*"; }
+STEP=0 STEPS=5
+step() { STEP=$((STEP + 1)); printf '\n\033[36m[%d/%d] %s\033[0m\n' "$STEP" "$STEPS" "$*"; }
 fail() { printf '\n\033[31mSetup stopped: %s\033[0m\n' "$*" >&2; exit 1; }
 done_already() { [ "$FORCE" = 0 ] && [ -e "$1" ]; }
 
@@ -96,4 +98,4 @@ cat > "Civilization III (recomp).sh" <<EOF
 cd "$ROOT" && exec build-linux/civ3 --run "\$@"
 EOF
 chmod +x "Civilization III (recomp).sh"
-step "Done: ./\"Civilization III (recomp).sh\""
+printf '\n\033[32mDone: ./"Civilization III (recomp).sh"\033[0m\n'

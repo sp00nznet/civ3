@@ -106,7 +106,7 @@ compiles the host. That takes about 45 minutes the first time; a rerun skips
 the finished steps. If it stops, it says why in one sentence, and the details
 are in `setup.log`.
 
-It ends with **`Civ3 Recomp.cmd`** in the repository folder, which runs the
+It ends with **`Civilization III (recomp).cmd`** in the repository folder, which runs the
 recompiled game.
 
 ### Step by step

@@ -1,0 +1,20 @@
+{
+  "title": "Civilization III: Conquests",
+  "repo": "sp00nznet/civ3",
+  "accent": "#c8a03c",
+  "note": {
+    "windows": "The first build takes about 45 minutes and about 4 GB. Python, pefile and capstone, CMake and Ninja are installed if they are missing; Visual Studio 2022 with 'Desktop development with C++' (the free Build Tools will do) must already be installed.",
+    "default": "The first build takes about 45 minutes and about 4 GB. It needs 32-bit gcc, SDL2, SDL2_ttf and ffmpeg (i386) from your package manager; if any are missing it says which, with the command to install them."
+  },
+  "game": {
+    "name": "Civilization III Complete",
+    "files": ["Conquests/Civ3Conquests.exe"],
+    "steam": "Sid Meier's Civilization III Complete"
+  },
+  "sources": [{ "repo": "sp00nznet/pcrecomp", "ref": "main", "dir": "pcrecomp" }],
+  "setup": {
+    "windows": ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\setup.ps1", "-Yes", "-Game", "{game}"],
+    "default": ["bash", "setup.sh", "--yes", "--game-dir", "{game}"]
+  },
+  "play": "* (recomp).*"
+}

@@ -67,7 +67,7 @@ Desktop.ini
 *.mp4
 
 # Setup output
-Civ3 Recomp.cmd
+Civilization III (recomp).cmd
 build-trace/
 
 # Linux: the DLL lifts and the native build

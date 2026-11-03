@@ -4,15 +4,17 @@
 #
 # It copies your install into game\, builds the function catalog, lifts the
 # whole executable to C, compiles the 32-bit host, and leaves a shortcut
-# (Civ3 Recomp.cmd) that runs it. Each step is skipped when its output already
+# (Civilization III (recomp).cmd) that runs it. Each step is skipped when its output already
 # exists (-Force redoes them). Everything it does goes to setup.log.
-param([switch]$Force, [string]$Game = "")
+param([switch]$Force, [switch]$Yes, [Alias('GameDir')][string]$Game = "")
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 # The toolkit sits beside this repo as tools\ (the pcrecomp house layout);
 # PCRECOMP points somewhere else, the same knob run_lift.py and CMake read.
-$Toolkit = if ($env:PCRECOMP) { (Resolve-Path $env:PCRECOMP).Path } else { Join-Path (Split-Path -Parent $Root) 'tools' }
+# recomp-launcher fetches it beside this repo as pcrecomp\, so that wins when present.
+$Parent = Split-Path -Parent $Root
+$Toolkit = if ($env:PCRECOMP) { (Resolve-Path $env:PCRECOMP).Path } elseif (Test-Path (Join-Path $Parent 'pcrecomp\tools')) { Join-Path $Parent 'pcrecomp' } else { Join-Path $Parent 'tools' }
 $T = Join-Path $Toolkit 'tools'
 $Log = Join-Path $Root 'setup.log'
 Set-Location $Root
@@ -24,9 +26,10 @@ function Step($n, $t) { Write-Host ""; Say "[$n/6] $t" 'Cyan' }
 function Fail($t) {
   Say "" ; Say "Setup stopped: $t" 'Red'
   Say "The details are in $Log. Fix that and run Setup.cmd again; finished steps are skipped." 'Yellow'
-  Read-Host "Press Enter to close" | Out-Null; exit 1
+  Pause-End; exit 1
 }
-function Ask($q) { $a = Read-Host "$q [Y/n]"; return -not ($a -match '^[nN]') }   # Enter = yes
+function Pause-End { if (-not $env:RECOMP_LAUNCHER) { Read-Host "Press Enter to close" | Out-Null } }
+function Ask($q) { if ($Yes) { Say "$q yes"; return $true }; $a = Read-Host "$q [Y/n]"; return -not ($a -match '^[nN]') }   # Enter = yes
 function Refresh-Path {
   $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 }
@@ -148,6 +151,7 @@ if ((Test-Path 'game\Conquests\Civ3Conquests.exe') -and -not $Force) {
     $Game = Find-Steam
     if ($Game) { Say "  Found it in your Steam library: $Game" }
   }
+  if (-not (Is-Install $Game) -and $Yes) { Fail "Civilization III Complete was not found in Steam. Give its folder with -Game." }
   while (-not (Is-Install $Game)) {
     $Game = (Read-Host "  Paste the folder Civilization III Complete is installed in (the one with the Conquests folder)").Trim('"', ' ')
     if (-not (Is-Install $Game)) { Say "  No Conquests\Civ3Conquests.exe in that folder." 'Yellow' }
@@ -185,9 +189,9 @@ else {
   Run "Building" @('cmd', '/c', (Join-Path $Root 'build.cmd'))
 }
 
-$sc = Join-Path $Root 'Civ3 Recomp.cmd'
+$sc = Join-Path $Root 'Civilization III (recomp).cmd'
 Set-Content -Path $sc -Encoding ASCII -Value "@echo off`r`ncd /d `"%~dp0`"`r`nbuild\civ3.exe --run %*`r`n"
 Write-Host ""
-Say "Done. Double-click 'Civ3 Recomp.cmd' to run the recompiled game." 'Green'
+Say "Done. Double-click 'Civilization III (recomp).cmd' to run the recompiled game." 'Green'
 Say "In the main menu, click an item once to select it and again to start it, as in the original."
-Read-Host "Press Enter to close" | Out-Null
+Pause-End

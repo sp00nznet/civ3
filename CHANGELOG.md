@@ -6,7 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-03
+
 ### Added
+- Installers for Windows and Linux: [recomp-launcher](https://github.com/sp00nznet/recomp-launcher)
+  with `launcher/launcher.json`, built by `.github/workflows/installer.yml`.
+  It finds the game in Steam, fetches this repo and pcrecomp, and runs the
+  setup. `tools/setup.ps1` takes `-Yes` (no questions) and finds the toolkit
+  at `../pcrecomp`; `setup.sh` takes `--yes` and numbers its steps. The
+  Windows launcher is now `Civilization III (recomp).cmd`.
 - The presenter (`src/runtime/present.c`, the default for `--run`): the
   game's picture in a Direct3D 11 window, scaled (F12), fullscreen (F11),
   with a settings menu (F10) that also sets the game's resolution; the game
