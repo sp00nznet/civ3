@@ -1,0 +1,44 @@
+name: native macOS checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    # Standard hosted runners in this public repository; no paid larger labels.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Pinned portable runtime
+        shell: bash
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/sp00nznet/pcrecomp.git ../tools
+          git -C ../tools checkout --detach "$(cat .pcrecomp-revision)"
+      - name: Native dependencies
+        run: brew install cmake ninja pkgconf sdl2 sdl2_ttf ffmpeg
+      - name: Python regression tests
+        run: python3 -m unittest discover -s tests -p 'test_macos*.py' -v
+      - name: Configure synthetic guests only
+        run: cmake -S . -B build-check -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCIV3_RUNTIME_TESTS_ONLY=ON -DPCRECOMP="${{ github.workspace }}/../tools"
+      - name: Build runtime and actual-host fixtures
+        run: cmake --build build-check --parallel 3
+      - name: Check memory, DLLs, drawing, audio and host startup
+        run: ctest --test-dir build-check --output-on-failure
