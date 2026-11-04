@@ -5,6 +5,8 @@
 > and [verified test status](docs/macos-validation.md). The upstream
 > Windows/Linux status below does not establish macOS compatibility. Keep
 > **Culturally Linked Start Locations off** (the setup default; known workaround).
+> Compressed manual saving/reloading is now tested across separate processes;
+> [save/load findings and regression coverage](docs/macos-save-load.md).
 
 A static recompilation of **Sid Meier's Civilization III: Conquests**
 (Firaxis, 2003; the 2015 Steam "Complete" build) from the shipping Win32

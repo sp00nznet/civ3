@@ -67,3 +67,29 @@ def fresh_settings(game: Path, work: Path) -> Path | None:
     ini.parent.mkdir(parents=True, exist_ok=True)
     ini.write_text(f"[Conquests]\nPlayIntro=0\nKeepRes=0\nVoice Quality=0\nRules={SAFE_DEFAULT_RULES:032b}\n", encoding="ascii")
     return backup
+
+
+def settings_warnings(game: Path) -> list[str]:
+    """Read only. Never silently change user rules or an existing save."""
+    path = find_casefold(game, "Conquests/conquests.ini")
+    rules = None
+    if path:
+        # Match the runtime's first-section, first-key semantics.
+        active = False
+        for line in path.read_text(encoding="latin-1").splitlines():
+            if line.startswith("["):
+                if active:
+                    break
+                active = line.casefold() == "[conquests]"
+            elif active and line.casefold().startswith("rules="):
+                rules = line.split("=", 1)[1].strip()
+                break
+    if rules is None:
+        return ["No explicit Rules setting: the game may enable Culturally Linked Start Locations, "
+                "which can crash world generation. Turn it off in New Game setup."]
+    if len(rules) != 32 or set(rules) - {"0", "1"}:
+        return ["Malformed Rules setting; disable Culturally Linked Start Locations in New Game setup."]
+    if int(rules, 2) & 0x40:
+        return ["Culturally Linked Start Locations is enabled. This option can crash world generation; "
+                "turn it off in New Game setup. Existing preferences and saves were not changed."]
+    return []

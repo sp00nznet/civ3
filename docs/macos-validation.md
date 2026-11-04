@@ -20,11 +20,12 @@ Local verification on **November 3, 2026**, not a claim of complete game compati
 | Check | Observed result |
 |---|---|
 | Upstream based-memory HLE self-tests | 12 passed natively on this Mac |
-| Setup, asset preflight, preference backup and smoke-verdict Python tests | 19 passed |
+| Setup, asset preflight, preference backup and smoke-verdict Python tests | 36 passed |
 | Miles guest-memory regression | Passed five synthetic MP3 open/decode/close cycles |
 | INI regression | Passed repeated key updates, insertion, deletion, case-independent sections, duplicate repair, failure and zero-size-buffer checks |
+| File-sharing regression | Passed bidirectional read/write sharing, inode aliases, no truncation on denial, mapped-byte preservation, and restriction release on close |
 | SDL ownership regression | Passed worker pump/draw/cursor/title checks; title changes are deferred until the owner pumps |
-| Synthetic-tests-only CMake build | All three native regression tests passed from a source-only staging directory with no game assets or generated game code |
+| Synthetic-tests-only CMake build | All four native regression tests passed from a source-only staging directory with no game assets or generated game code |
 | Main executable import binding | 245 imports, zero unresolved |
 | Renderer / sound imports | 121 / 136 imports, zero unresolved |
 | Main menu | Reached; valid 1024x768 PPM, PNG visually inspected |
@@ -32,6 +33,9 @@ Local verification on **November 3, 2026**, not a claim of complete game compati
 | Headless gameplay, audio enabled, INI fix applied | Quick Start and turn 2; expected watchdog exit 4 |
 | Native window | Cocoa window registered on screen, 1280-pixel width; direct window screenshot blocked by the Mac's capture permissions |
 | Windowed gameplay, audio enabled, culture-linked starts disabled | Completed Quick Start, founded Rome, and reached turn 3 / 3850 BC; framebuffer visually inspected; expected watchdog termination |
+| Compressed manual save -> fresh-process reload | Automated two-process test restored turn 3 exactly and played to turn 8, producing five new autosaves; source and loaded save hashes unchanged |
+| Older saved-game compatibility | A private copy of the existing Persian 330 BC save loaded at turn 111 and continued to turn 112 / 310 BC; framebuffer visually inspected; original file SHA-256 unchanged |
+| Unchanged native build | Patched source and executable timestamps unchanged; measured 0.153 seconds on the final rebuilt version for a no-op configure/build on this host |
 
 The main menu milestone alone does not prove gameplay. A valid nonuniform
 framebuffer is required by the smoke checker. The explicit turn counts above
@@ -48,6 +52,17 @@ Local evidence remains in the ignored `work/` directory:
 - `macos-window-fixed.log` preserves the earlier culture-linked-start crash.
 - `source-only-validation.log` records all three native tests built without game code.
 
+Follow-up evidence:
+
+- `macos-roundtrip-verified/result.json`, `save.log`, `reload.log`, and their
+  framebuffers record the fresh-process round trip and exact tested binary hash.
+- `macos-followup-python-tests.log`: 36 Python tests.
+- `macos-followup-native-tests.log`: all four native regression tests.
+- `followup-source-only.log`: all four tests built without commercial game data.
+- `macos-final-noop-build.json`: final no-op build timing and unchanged file timestamps.
+- `macos-legacy-save-verified/result.json`, `loaded.log`, `loaded.ppm`: the older
+  Persian save restored and continued on the final rebuilt executable.
+
 ## Failures found and repaired
 
 1. **64-bit pointer conversion in Miles audio.** Two static strings and ASI
@@ -63,6 +78,12 @@ Local evidence remains in the ignored `work/` directory:
 4. **Incomplete local game data.** The original installation lacked startup
    cursor animation files and one music track. These were repaired only in the
    private test copy, as detailed below. Setup now checks these dependencies.
+
+5. **Compressed saves could not reload.** The HLE ignored `CreateFileA` sharing
+   restrictions and allowed a second decompression to truncate `save0.tmp`
+   while the first save was still mapped. The independent and lifted decoders
+   agreed byte-for-byte; file-sharing checks fix the actual I/O problem without
+   replacing the codec or altering saves. See [full findings](macos-save-load.md).
 
 **Remaining game bug / workaround:** Quick Start can still crash with culturally
 linked starts enabled, including after the INI fix. Instrumentation identified a
@@ -95,7 +116,8 @@ committed or distributed with this fork.
 
 - Intel/x86_64 compilation or gameplay, older macOS releases, or universal builds.
 - Long campaigns, all civilizations/scenarios, multiplayer, or Windows conformance.
-- Save/load round-trips on this port (existing upstream coverage is not Mac proof).
+- Broad save compatibility across every scenario, mod and game version; the
+  successful compressed-save round trip is described above, not a universal claim.
 - Optimized release performance, signing/notarization or standalone app packaging.
 - Manual keyboard/mouse interaction beyond the host's scripted input path.
 - The game still emits upstream's Steam-initialization warning in its log; the

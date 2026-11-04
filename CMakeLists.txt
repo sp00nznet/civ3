@@ -46,18 +46,35 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Patch only a build-directory copy. The pinned toolkit stays untouched.
     find_program(PATCH_EXECUTABLE patch REQUIRED)
     set(MACOS_HLE_DIR "${CMAKE_CURRENT_BINARY_DIR}/pcrecomp-macos")
-    file(MAKE_DIRECTORY "${MACOS_HLE_DIR}")
+    file(MAKE_DIRECTORY "${MACOS_HLE_DIR}" "${MACOS_HLE_DIR}/staging")
     foreach(PATCH_SPEC IN ITEMS "mss.c|pcrecomp-mss-guest-memory.patch"
                                 "kernel32_ext.c|pcrecomp-profile-updates.patch"
                                 "screen.c|pcrecomp-screen-thread.patch")
       string(REPLACE "|" ";" PATCH_FIELDS "${PATCH_SPEC}")
       list(GET PATCH_FIELDS 0 PATCH_SOURCE)
       list(GET PATCH_FIELDS 1 PATCH_FILE)
-      configure_file("${HLE}/${PATCH_SOURCE}" "${MACOS_HLE_DIR}/${PATCH_SOURCE}" COPYONLY)
-      execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/${PATCH_SOURCE}"
+      configure_file("${HLE}/${PATCH_SOURCE}" "${MACOS_HLE_DIR}/staging/${PATCH_SOURCE}" COPYONLY)
+      execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/${PATCH_SOURCE}"
                       "${CMAKE_SOURCE_DIR}/patches/${PATCH_FILE}" RESULT_VARIABLE PATCH_RESULT)
       if(NOT PATCH_RESULT EQUAL 0)
         message(FATAL_ERROR "${PATCH_FILE} failed; use the pinned pcrecomp revision")
+      endif()
+      if(PATCH_SOURCE STREQUAL "kernel32_ext.c")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/kernel32_ext.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-file-sharing.patch"
+                        RESULT_VARIABLE SHARING_PATCH_RESULT)
+        if(NOT SHARING_PATCH_RESULT EQUAL 0)
+          message(FATAL_ERROR "File-sharing patch failed; use the pinned pcrecomp revision")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-file-sharing.patch")
+      endif()
+      # Reapplying a patch must not rebuild/relink the game on every launch.
+      execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                      "${MACOS_HLE_DIR}/staging/${PATCH_SOURCE}" "${MACOS_HLE_DIR}/${PATCH_SOURCE}"
+                      RESULT_VARIABLE COPY_RESULT)
+      if(NOT COPY_RESULT EQUAL 0)
+        message(FATAL_ERROR "Could not stage patched ${PATCH_SOURCE}")
       endif()
       list(REMOVE_ITEM HLE_SOURCES "${HLE}/${PATCH_SOURCE}")
       list(APPEND HLE_SOURCES "${MACOS_HLE_DIR}/${PATCH_SOURCE}")
@@ -114,6 +131,13 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
                                  RECOMP_MEM_BASE=0x100000000000ull HLE_WITH_FFMPEG)
       target_compile_options(civ3_screen_test PRIVATE -fno-strict-aliasing -fwrapv)
       target_link_libraries(civ3_screen_test PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_TTF PkgConfig::FFMPEG pthread m)
+      add_executable(civ3_sharing_test tests/file_sharing_selftest.c ${HLE_SOURCES})
+      target_include_directories(civ3_sharing_test PRIVATE ${HLE} ${PCRECOMP}/runtime/recomp32)
+      target_compile_definitions(civ3_sharing_test PRIVATE RECOMP_RETADDR=0u
+                                 RECOMP_MEM_BASE=0x100000000000ull HLE_WITH_FFMPEG)
+      target_compile_options(civ3_sharing_test PRIVATE -fno-strict-aliasing -fwrapv)
+      target_link_libraries(civ3_sharing_test PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_TTF PkgConfig::FFMPEG pthread m)
+      add_test(NAME macos_file_sharing COMMAND civ3_sharing_test)
       add_test(NAME macos_screen_thread COMMAND civ3_screen_test)
       set_tests_properties(macos_screen_thread PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
       add_test(NAME macos_profile_updates COMMAND civ3_profile_test)

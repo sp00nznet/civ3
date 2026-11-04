@@ -72,6 +72,11 @@ An incomplete stage or a lift with errors/stubs is not marked successful.
 ./script/build_and_run.sh --verify
 ```
 
+Unchanged launches no longer rebuild patched runtime files: patch staging preserves
+source and executable timestamps when their contents are unchanged. The launch
+preflight checks the selected game copy and warns about unsafe culture-linked
+starts without changing your preferences.
+
 The initial bring-up build uses **`GEN_OPT=-O0`** for generated code to avoid
 expensive optimization before correctness is established. This is a debug/
 validation build, not a performance-tuned release. An optimized rebuild is:
@@ -103,6 +108,25 @@ Logs, snapshots, catalogs, and generated sources remain under gitignored
 `work/`, `build-macos/`, and `src/recomp/gen*` directories. Neither game assets
 nor game-derived binaries/source are published with this fork.
 
+
+### Save/load round-trip test
+
+Use an owned save from turn 1 or later. This test uses two fresh game processes
+and private copy-on-write installations; it does not alter the source save or
+source installation:
+
+```sh
+python3 tools/macos_roundtrip.py --seed-save "/path/to/your-save.SAV"
+```
+
+It loads the seed, creates a compressed manual save through the game's Save
+dialog, exits, reloads that new save in another process, then requires at least
+three completed turns and three fresh autosaves. `result.json`, process exit
+codes, logs, framebuffers and SHA-256 hashes remain under `work/roundtrip-*`.
+An error dialog, a menu-only run or a missing framebuffer is a failure.
+The scripted coordinates assume the game's 1024x768 interface. The seed must
+load without extra scenario-specific dialogs. See [save/load findings](macos-save-load.md).
+
 ## Changes from upstream
 
 - Allow a 64-bit Apple host without removing the 32-bit Windows/Linux checks.
@@ -112,11 +136,13 @@ nor game-derived binaries/source are published with this fork.
 - Fix Miles audio strings/handles crossing the 64-bit host/32-bit guest boundary.
 - Keep Cocoa/SDL polling and presentation on the window thread; defer worker
   cursor and title requests to that thread.
+- Honor in-process `CreateFileA` sharing restrictions before truncating files,
+  so compressed-save loading cannot overwrite its still-mapped temporary file.
 - Fix INI updates so existing keys change in place instead of becoming invisible
   duplicate-section entries. Writes use a temporary file and atomic rename.
 - Add pinned, resumable setup, native build and launch entrypoints, and tests.
 
-The three runtime fixes patch **build-directory copies** of upstream files;
+The four runtime fixes patch **build-directory copies** of upstream files;
 the pinned toolkit checkout remains clean. Their regression tests use only
 synthetic INIs and a synthesized tone, never commercial game files.
 They can be built independently of the game:

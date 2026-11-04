@@ -8,6 +8,7 @@ MODE=run
 case "${1:-}" in
   run|--debug|--verify|--logs|--telemetry) MODE=$1; shift ;;
 esac
+python3 tools/macos_preflight.py "$@"
 # Only stop a prior process launched from this checkout, never another civ3.
 PID_FILE="$ROOT/work/macos-game.pid"
 if [ -f "$PID_FILE" ]; then
