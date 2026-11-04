@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 
-# Steam defaults with only culturally linked starts (rule bit 0x40) disabled.
-# That optional path reads an unset civilization (-1) during Quick Start and
-# can underflow the rules allocation on the native based-memory host.
+# Conservative defaults retain culturally linked starts (rule bit 0x40) off.
+# The native build now repairs its stale pending-race lookup, but broader
+# scenarios and exact placement equivalence are not yet verified.
 SAFE_DEFAULT_RULES = 0x000481DF & ~0x40
 
 # Alternative paths follow the game's Conquests -> PTW -> base search order.
@@ -86,10 +86,10 @@ def settings_warnings(game: Path) -> list[str]:
                 break
     if rules is None:
         return ["No explicit Rules setting: the game may enable Culturally Linked Start Locations, "
-                "which can crash world generation. Turn it off in New Game setup."]
+                "which require the experimental macOS startup repair. Older/unpatched builds can crash; off is the conservative choice."]
     if len(rules) != 32 or set(rules) - {"0", "1"}:
         return ["Malformed Rules setting; disable Culturally Linked Start Locations in New Game setup."]
     if int(rules, 2) & 0x40:
-        return ["Culturally Linked Start Locations is enabled. This option can crash world generation; "
-                "turn it off in New Game setup. Existing preferences and saves were not changed."]
+        return ["Culturally Linked Start Locations is enabled and requires the experimental macOS startup repair. "
+                "Off remains the conservative choice for untested scenarios. Existing preferences and saves were not changed."]
     return []

@@ -94,6 +94,19 @@ class MacOSSetupTests(unittest.TestCase):
         self.assertTrue(smoke.assess(4, "no menu", image))
         self.assertTrue(smoke.assess(4, "[game] main menu open\n=== fault:", image))
 
+    def test_smoke_rejects_game_error_dialog_after_menu(self):
+        image = self.root / "error.ppm"
+        image.write_bytes(b"P6\n32 32\n255\n" + bytes(range(256))*12)
+        failures = smoke.assess(4, "[game] main menu open\n[messagebox] Load Error: FILE NOT FOUND", image)
+        self.assertTrue(any("unexpected game dialog" in x for x in failures))
+
+    def test_smoke_allows_only_known_steam_initialization_notice(self):
+        image = self.root / "screen.ppm"
+        image.write_bytes(b"P6\n32 32\n255\n" + bytes(range(256))*12)
+        known = "[messagebox] Fatal Error: Steam must be running to play this game(SteamAPI_Init() failed)."
+        self.assertEqual(smoke.assess(4, "[game] main menu open\n"+known, image), [])
+        self.assertTrue(smoke.assess(4, "[game] main menu open\n[messagebox] Fatal Error: other Steam error", image))
+
     def test_smoke_rejects_blank_or_truncated_framebuffer(self):
         image = self.root / "screen.ppm"
         for pixels in (b"\x80" * 3072, bytes(range(256))):

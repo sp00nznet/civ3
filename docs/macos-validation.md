@@ -20,12 +20,12 @@ Local verification on **November 3, 2026**, not a claim of complete game compati
 | Check | Observed result |
 |---|---|
 | Upstream based-memory HLE self-tests | 12 passed natively on this Mac |
-| Setup, asset preflight, preference backup and smoke-verdict Python tests | 36 passed |
+| Setup, asset preflight, preference backup and smoke-verdict Python tests | 54 passed |
 | Miles guest-memory regression | Passed five synthetic MP3 open/decode/close cycles |
 | INI regression | Passed repeated key updates, insertion, deletion, case-independent sections, duplicate repair, failure and zero-size-buffer checks |
 | File-sharing regression | Passed bidirectional read/write sharing, inode aliases, no truncation on denial, mapped-byte preservation, and restriction release on close |
 | SDL ownership regression | Passed worker pump/draw/cursor/title checks; title changes are deferred until the owner pumps |
-| Synthetic-tests-only CMake build | All four native regression tests passed from a source-only staging directory with no game assets or generated game code |
+| Synthetic-tests-only CMake build | All five native regression tests passed from a source-only staging directory with no game assets or generated game code |
 | Main executable import binding | 245 imports, zero unresolved |
 | Renderer / sound imports | 121 / 136 imports, zero unresolved |
 | Main menu | Reached; valid 1024x768 PPM, PNG visually inspected |
@@ -85,13 +85,12 @@ Follow-up evidence:
    agreed byte-for-byte; file-sharing checks fix the actual I/O problem without
    replacing the codec or altering saves. See [full findings](macos-save-load.md).
 
-**Remaining game bug / workaround:** Quick Start can still crash with culturally
-linked starts enabled, including after the INI fix. Instrumentation identified a
-civilization ID of `-1` in the optional culture-group comparison, causing a read
-before the rules allocation. The observed failures depend on whether the preceding guest page is mapped;
-other runs reached gameplay despite the same invalid lookup. Fresh setup now disables only this optional rule (`0x40`).
-The game algorithm itself has not been patched; re-enabling the option is unsafe.
-This does not prove every world seed or civilization is safe.
+**Culture-linked startup:** the prior required workaround now has an experimental
+repair. Two stale leader-identity reads are resolved from pending choices and
+validated before indexing the rules. Three culture-enabled new-game configurations
+passed initial turns; the conservative setup default remains off. See
+[full findings and limitations](macos-culture-starts.md). Exact placement equivalence,
+unusual scenarios and multiplayer remain unverified.
 
 ## Private asset provenance and original-install safety
 
@@ -125,3 +124,24 @@ committed or distributed with this fork.
 
 The launch scripts use this checkout and Homebrew libraries. They are not a
 self-contained redistributable game or signed application bundle.
+
+## Additional culture-start and extended QA pass
+
+- Final repaired build: tiny culture-linked game to turn 4; selected Persia on
+  small to turn 4; standard to turn 2. A second tiny test through the reusable
+  tool reached turn 3. All three matrix framebuffers were visually inspected.
+- Repeated compressed-save round trip on that exact build restored turn 3 and
+  continued to turn 7; source and loaded-save hashes stayed unchanged.
+- Before the repair, a frozen copy of the previously verified executable ran for
+  five minutes to turn 19, and a separate UI run showed Domestic/Science advisors,
+  Civilopedia and Preferences before playing to turn 11. Those are baseline tests,
+  not mislabeled results from the final repaired binary.
+- 54 Python tests and five native tests pass, including all five from a source-only
+  staging directory. The culture selector covers 961 player/human combinations.
+- Final-build evidence, exact binary hashes, reproducer commands and remaining
+  limitations are recorded in [macos-culture-starts.md](macos-culture-starts.md).
+
+The final repaired executable also completed a windowed culture-linked Persian
+game to turn 4 / 3800 BC with audio enabled. CoreGraphics reported the native
+Cocoa window, and the final game framebuffer was visually inspected. Evidence:
+`work/macos-culture-window/`.

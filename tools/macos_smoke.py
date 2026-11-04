@@ -20,6 +20,10 @@ def assess(returncode: int, log: str, image: Path) -> list[str]:
     for marker in ("[not-lifted]", "=== fault:", "[win32hle] FATAL", "[fatal]"):
         if marker in log:
             failures.append(f"runtime failure marker: {marker}")
+    for line in log.splitlines():
+        if line.startswith("[messagebox]") and not line.startswith(
+                "[messagebox] Fatal Error: Steam must be running to play this game(SteamAPI_Init() failed)."):
+            failures.append("unexpected game dialog: " + line)
     if not image.is_file() or image.stat().st_size < 1024:
         failures.append("no usable framebuffer snapshot")
     else:

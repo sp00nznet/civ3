@@ -82,6 +82,22 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
                    "${CMAKE_SOURCE_DIR}/patches/${PATCH_FILE}")
     endforeach()
   endif()
+  option(CIV3_CULTURE_START_FIX "Repair pending-race lookups during culture-linked starts on macOS" ON)
+  if(APPLE AND NOT CIV3_RUNTIME_TESTS_ONLY AND CIV3_CULTURE_START_FIX)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(CULTURE_OVERLAY "${CMAKE_CURRENT_BINARY_DIR}/culture-overlay")
+    # Regeneration of any original chunk must rerun the checked transformation.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GEN_SOURCES}
+                 "${CMAKE_SOURCE_DIR}/tools/macos_culture_overlay.py")
+    execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/macos_culture_overlay.py"
+                    --source "${CMAKE_SOURCE_DIR}/src/recomp/gen" --output "${CULTURE_OVERLAY}"
+                    --exe "${CMAKE_SOURCE_DIR}/work/Civ3Conquests.exe"
+                    RESULT_VARIABLE CULTURE_RESULT)
+    if(NOT CULTURE_RESULT EQUAL 0)
+      message(FATAL_ERROR "Culture-start overlay failed; use the supported full lift, or disable CIV3_CULTURE_START_FIX")
+    endif()
+    include("${CULTURE_OVERLAY}/sources.cmake")
+  endif()
   if(NOT CIV3_RUNTIME_TESTS_ONLY)
     add_executable(civ3 src/linux/main.c src/linux/script.c src/linux/dispatch.c ${HLE_SOURCES} ${GEN_SOURCES} ${DLL_SOURCES})
     target_include_directories(civ3 PRIVATE src/linux ${HLE} ${PCRECOMP}/runtime/recomp32)
@@ -113,6 +129,9 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     include(CTest)
     if(BUILD_TESTING)
       find_program(FFMPEG_EXECUTABLE ffmpeg REQUIRED)
+      add_executable(civ3_culture_test tests/culture_start_selftest.c)
+      target_include_directories(civ3_culture_test PRIVATE src/linux)
+      add_test(NAME macos_culture_pending_race COMMAND civ3_culture_test)
       add_executable(civ3_mss_test tests/mss_guest_selftest.c ${HLE_SOURCES})
       target_include_directories(civ3_mss_test PRIVATE ${HLE} ${PCRECOMP}/runtime/recomp32)
       target_compile_definitions(civ3_mss_test PRIVATE RECOMP_RETADDR=0u

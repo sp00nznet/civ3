@@ -4,7 +4,8 @@
 > gameplay on `macos-native-verified`; Intel support is untested. See [macOS setup](docs/macos.md)
 > and [verified test status](docs/macos-validation.md). The upstream
 > Windows/Linux status below does not establish macOS compatibility. Keep
-> **Culturally Linked Start Locations off** (the setup default; known workaround).
+> culture-linked starts **off by default**; the new [startup repair](docs/macos-culture-starts.md)
+> is tested on initial turns but remains experimental.
 > Compressed manual saving/reloading is now tested across separate processes;
 > [save/load findings and regression coverage](docs/macos-save-load.md).
 

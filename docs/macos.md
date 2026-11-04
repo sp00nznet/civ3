@@ -10,12 +10,12 @@ Full-game validation is tracked in `macos-validation.md`. Intel compilation,
 multiplayer, long campaigns, and distribution/signing are not yet verified.
 The upstream Windows/Linux compatibility table is not a macOS test result.
 
-**Required workaround:** leave **Culturally Linked Start Locations** off.
-The optional culture-placement path can index an unassigned civilization (-1)
-and crash before a new game opens. Fresh setup defaults disable only rule bit
-`0x40`; all other observed Steam default rule bits are unchanged. This is a
-configuration workaround, not a repaired game algorithm. `--keep-settings` can
-retain an unsafe imported choice; use `--reset-settings` or turn it off in-game.
+**Culture-linked starts:** the Mac build now includes an experimental repair
+for the uninitialized civilization lookup that caused the earlier startup crash.
+Tiny, small (Persia), and standard culture-linked games have completed initial
+turns. Setup still leaves the option **off by default**, and existing preferences
+are not changed. Broader scenario and exact placement behavior are unverified;
+see [the repair and test evidence](macos-culture-starts.md).
 
 ## Requirements
 
@@ -74,8 +74,8 @@ An incomplete stage or a lift with errors/stubs is not marked successful.
 
 Unchanged launches no longer rebuild patched runtime files: patch staging preserves
 source and executable timestamps when their contents are unchanged. The launch
-preflight checks the selected game copy and warns about unsafe culture-linked
-starts without changing your preferences.
+preflight checks the selected game copy and warns about the limited validation
+of culture-linked starts without changing your preferences.
 
 The initial bring-up build uses **`GEN_OPT=-O0`** for generated code to avoid
 expensive optimization before correctness is established. This is a debug/
@@ -96,6 +96,7 @@ python3 -m unittest discover -s tests -p 'test_macos*.py' -v
 HLE_MEM_BASE=0x100000000000ull ../tools/runtime/win32hle/build_selftests.sh
 ctest --test-dir build-macos --output-on-failure
 python3 tools/macos_smoke.py
+python3 tools/macos_newgame_test.py random-tiny
 python3 tools/playtest.py --list
 ```
 
@@ -156,3 +157,9 @@ ctest --test-dir build-macos-tests --output-on-failure
 The portable memory allocator, Win32 implementation, SDL presentation/audio,
 and FFmpeg integration are upstream pcrecomp components, not newly rewritten
 in this fork.
+
+## Culture-start build overlay
+
+The default Mac build applies the checked culture-start overlay only to a
+build-directory copy of the generated game code. It requires the full supported
+lift and fails closed on changed instructions. See [details and limitations](macos-culture-starts.md).
