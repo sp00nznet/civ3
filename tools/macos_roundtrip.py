@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 from macos_smoke import assess
+from macos_qa_cleanup import remove_clones
 
 ROOT = Path(__file__).resolve().parents[1]
 LOAD = ["--move", "240,425@1", "--open", "240,425@2", "--click", "621,557@10",
@@ -107,6 +108,8 @@ def main() -> int:
     parser.add_argument("--game-dir", type=Path, default=ROOT / "game")
     parser.add_argument("--binary", type=Path, default=ROOT / "build-macos/civ3")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--keep-test-games", action="store_true",
+                        help="Keep disposable copies and their saves for debugging (off by default)")
     args = parser.parse_args()
     seed, source, binary = (p.expanduser().resolve() for p in (args.seed_save, args.game_dir, args.binary))
     if not seed.is_file() or not binary.is_file() or not (source / "Conquests").is_dir():
@@ -149,6 +152,15 @@ def main() -> int:
         print(f"FAIL: {error}. Evidence retained: {output}", file=sys.stderr)
         return 1
     finally:
+        if not args.keep_test_games:
+            try:
+                removed = remove_clones(output, ("save-game", "reload-game",
+                                                 "save-game-inherited-saves",
+                                                 "reload-game-inherited-saves"))
+                report["temporary_copies_removed"] = removed
+            except (OSError, ValueError) as error:
+                report["cleanup_warning"] = str(error)
+                print(f"WARNING: QA copy cleanup: {error}", file=sys.stderr)
         (output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
 
 

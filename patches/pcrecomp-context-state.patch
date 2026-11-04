@@ -1,0 +1,53 @@
+--- host_lite.c
++++ host_lite.c
+@@ -90,24 +90,39 @@
+ }
+ 
+ typedef struct {
+-    uint32_t eax, ecx, edx, esp, ebx, esi, edi, ebp, fs, cur;
++    uint32_t eax, ecx, edx, esp, ebx, esi, edi, ebp, fs, gs, cur;
++    /* Lazy flags cross lifted calls; they belong to the guest context just
++     * like vector state, not to the last native thread that ran. */
++    uint32_t flag_k, flag_a, flag_b, flag_cf, mxcsr;
++    uint16_t seg_cs, seg_ds, seg_es, seg_fs, seg_gs, seg_ss;
+     double   st[8];
+     int      fp_top;
+     uint16_t fpu_cw;
+     uint64_t mm[8];
++    xmm_t    xmm[8];
+ } regs_t;
+ 
+ static void regs_save(regs_t *r) {
+     r->eax=g_eax; r->ecx=g_ecx; r->edx=g_edx; r->esp=g_esp;
+     r->ebx=g_ebx; r->esi=g_esi; r->edi=g_edi; r->ebp=g_ebp;
+-    r->fs=g_fs_base; r->cur=g_cur_func;
++    r->fs=g_fs_base; r->gs=g_gs_base; r->cur=g_cur_func;
++    r->flag_k=g_flag_k; r->flag_a=g_flag_a; r->flag_b=g_flag_b; r->flag_cf=g_flag_cf;
++    r->mxcsr=g_mxcsr;
++    r->seg_cs=g_seg_cs; r->seg_ds=g_seg_ds; r->seg_es=g_seg_es;
++    r->seg_fs=g_seg_fs; r->seg_gs=g_seg_gs; r->seg_ss=g_seg_ss;
++    memcpy(r->xmm, g_xmm, sizeof g_xmm);
+     memcpy(r->st, g_st, sizeof g_st); r->fp_top=g_fp_top; r->fpu_cw=g_fpu_cw;
+     memcpy(r->mm, g_mm, sizeof g_mm);
+ }
+ static void regs_load(const regs_t *r) {
+     g_eax=r->eax; g_ecx=r->ecx; g_edx=r->edx; g_esp=r->esp;
+     g_ebx=r->ebx; g_esi=r->esi; g_edi=r->edi; g_ebp=r->ebp;
+-    g_fs_base=r->fs; g_cur_func=r->cur;
++    g_fs_base=r->fs; g_gs_base=r->gs; g_cur_func=r->cur;
++    g_flag_k=r->flag_k; g_flag_a=r->flag_a; g_flag_b=r->flag_b; g_flag_cf=r->flag_cf;
++    g_mxcsr=r->mxcsr;
++    g_seg_cs=r->seg_cs; g_seg_ds=r->seg_ds; g_seg_es=r->seg_es;
++    g_seg_fs=r->seg_fs; g_seg_gs=r->seg_gs; g_seg_ss=r->seg_ss;
++    memcpy(g_xmm, r->xmm, sizeof g_xmm);
+     memcpy(g_st, r->st, sizeof g_st); g_fp_top=r->fp_top; g_fpu_cw=r->fpu_cw;
+     memcpy(g_mm, r->mm, sizeof g_mm);
+ }
+@@ -137,6 +152,7 @@
+         g_ms.r.esp = lo + GUEST_STACK - 64;
+         g_ms.r.fs = make_tib(lo, lo + GUEST_STACK);
+         g_ms.r.fpu_cw = 0x027F;
++        g_ms.r.mxcsr = 0x1F80; /* deterministic SSE default for each guest thread */
+         g_ms.inited = 1;
+     }
+ }

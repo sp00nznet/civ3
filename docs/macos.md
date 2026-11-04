@@ -203,3 +203,31 @@ in this fork.
 The default Mac build applies the checked culture-start overlay only to a
 build-directory copy of the generated game code. It requires the full supported
 lift and fails closed on changed instructions. See [details and limitations](macos-culture-starts.md).
+
+
+## Reproducible Finder app and test-data cleanup
+
+The clickable `Civilization III.app` is a locally compiled Swift/AppKit wrapper
+that launches the existing native game without opening Terminal. The app,
+icon, and build instructions are source-controlled, rather than relying on
+temporary untracked files:
+
+```sh
+./script/build_macos_app.sh                    # creates dist/Civilization III.app
+./script/build_macos_app.sh --install-desktop  # installs/replaces our Desktop app
+```
+
+The launcher is signed locally (ad hoc), not notarized or a redistributable
+commercial game. It locates an existing project, or asks for its folder.
+
+Runtime fixes on `main` preserve additional register, flag and SIMD state
+across guest thread changes and cache lookups in the immutable generated
+dispatch table. The synthetic lookup benchmark improves ~4.43x; this is
+**not a whole-game performance multiplier**. See
+[verification and limitations](macos-runtime-2026.md).
+
+The save/reload, new-game, and menu-performance QA tools now delete
+their **disposable copied installations and test saves** by default once
+their verdicts, screenshots and logs are recorded. Use
+`--keep-test-games` only when you need a clone for debugging.
+Normal saves and the original installation are never cleanup targets.

@@ -1,0 +1,27 @@
+--- host_lite.c
++++ host_lite.c
+@@ -223,12 +223,22 @@
+  * recomp_lookup searches the generated dispatch table (declared extern in
+  * recomp_types.h; defined by the lifted program, or the selftest). */
+ recomp_func_t recomp_lookup(uint32_t va) {
++    /* The linked dispatch table is immutable for the process lifetime.
++     * Cache exact keys, including misses, per native thread. Never cache the
++     * import resolver: it must refresh pending-shim state on every call. */
++    typedef struct { uint32_t key, valid; recomp_func_t function; } entry;
++    static __thread entry cache[256]; /* 4 KiB per thread on a 64-bit host */
++    uint32_t slot = (va ^ (va >> 4) ^ (va >> 12)) & 255u;
++    entry *cached = &cache[slot];
++    if (cached->valid && cached->key == va) return cached->function;
++    recomp_func_t found = NULL;
+     uint32_t lo = 0, hi = recomp_dispatch_count;
+     while (lo < hi) {
+         uint32_t mid = lo + (hi - lo) / 2, m = recomp_dispatch_table[mid].address;
+-        if (m == va) return recomp_dispatch_table[mid].func;
++        if (m == va) { found = recomp_dispatch_table[mid].func; break; }
+         if (m < va) lo = mid + 1; else hi = mid;
+     }
+-    return NULL;
++    cached->key = va; cached->function = found; cached->valid = 1;
++    return found;
+ }
+ recomp_func_t recomp_lookup_manual(uint32_t va) { (void)va; return NULL; }

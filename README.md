@@ -14,6 +14,10 @@
 > Graphics-copy paths and framebuffer lifetime are improved; see the
 > [measurements, scope and regression evidence](docs/macos-performance.md).
 
+> **Native macOS runtime update:** improved CPU-state isolation and guest-function
+> lookup caching, with source-controlled Finder launcher and automatic cleanup
+> of disposable QA copies. See [runtime details](docs/macos-runtime-2026.md).
+>
 > **Reliability update:** safer relaunching, protected video recordings and
 > validated save/reload are documented in [macOS reliability](docs/macos-reliability.md).
 

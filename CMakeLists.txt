@@ -100,6 +100,24 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-pixel-formats.patch")
       endif()
+      if(PATCH_SOURCE STREQUAL "host_lite.c")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/host_lite.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-context-state.patch"
+                        RESULT_VARIABLE CONTEXT_STATE_RESULT)
+        if(NOT CONTEXT_STATE_RESULT EQUAL 0)
+          message(FATAL_ERROR "Guest context repair failed; use the pinned runtime")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-context-state.patch")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/host_lite.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-dispatch-cache.patch"
+                        RESULT_VARIABLE DISPATCH_CACHE_RESULT)
+        if(NOT DISPATCH_CACHE_RESULT EQUAL 0)
+          message(FATAL_ERROR "Dispatch cache patch failed; use the pinned runtime")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-dispatch-cache.patch")
+      endif()
       # Reapplying a patch must not rebuild/relink the game on every launch.
       execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                       "${MACOS_HLE_DIR}/staging/${PATCH_SOURCE}" "${MACOS_HLE_DIR}/${PATCH_SOURCE}"

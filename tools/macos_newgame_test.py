@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 from macos_assets import fresh_settings, validate_assets
+from macos_qa_cleanup import remove_clones
 from macos_roundtrip import BAD, digest, turns
 from macos_smoke import assess
 
@@ -82,6 +83,8 @@ def main() -> int:
     parser.add_argument('--game-dir', type=Path, default=ROOT/'game')
     parser.add_argument('--binary', type=Path, default=ROOT/'build-macos/civ3')
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--keep-test-games', action='store_true',
+                        help='Keep disposable game copies and saves for debugging (off by default)')
     args = parser.parse_args()
     source, binary = (p.expanduser().resolve() for p in (args.game_dir, args.binary))
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
@@ -106,6 +109,16 @@ def main() -> int:
         print(f'FAIL: {error}', file=sys.stderr)
         return 1
     finally:
+        if not args.keep_test_games:
+            for name in args.cases or CASES:
+                case_output = output / name
+                if case_output.exists():
+                    try:
+                        removed = remove_clones(case_output, ("game", "inherited-saves"))
+                        report["cases"].setdefault(name, {})["temporary_copies_removed"] = removed
+                    except (OSError, ValueError) as error:
+                        report.setdefault("cleanup_warnings", []).append(f"{name}: {error}")
+                        print(f"WARNING: QA copy cleanup for {name}: {error}", file=sys.stderr)
         (output/'result.json').write_text(json.dumps(report, indent=2)+'\n')
         print(f'Evidence retained: {output}', flush=True)
 

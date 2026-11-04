@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from macos_roundtrip import digest, private_game
+from macos_qa_cleanup import remove_clones
 from macos_smoke import assess
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -95,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--seconds', type=int, default=12)
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--keep-test-games', action='store_true',
+                        help='Keep cloned game copies and test saves for debugging (off by default)')
     parser.add_argument('--windowed', action='store_true', help='Use real native windows; otherwise headless')
     args = parser.parse_args(argv)
     if sys.platform != 'darwin': parser.error('This benchmark reports macOS wait4 RSS units and uses APFS cloning')
@@ -133,6 +136,15 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError,RuntimeError,ValueError,subprocess.SubprocessError) as error:
         report['error'] = str(error);print(f'FAIL: {error}',file=sys.stderr);return 1
     finally:
+        if not args.keep_test_games:
+            try:
+                removed = remove_clones(output, ('baseline-game', 'candidate-game',
+                                                 'baseline-game-inherited-saves',
+                                                 'candidate-game-inherited-saves'))
+                report['temporary_copies_removed'] = removed
+            except (OSError, ValueError) as error:
+                report['cleanup_warning'] = str(error)
+                print(f'WARNING: QA copy cleanup: {error}', file=sys.stderr)
         (output/'result.json').write_text(json.dumps(report,indent=2)+'\n')
 
 
