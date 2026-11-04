@@ -1,5 +1,8 @@
 # Civilization III: Conquests — Static Recompilation
 
+> **Consolidated on `main`:** all fork branches are integrated. The tested macOS
+> implementation is authoritative; earlier branch history is preserved.
+
 > **Performance and stability:** idle-menu CPU fell by 85% in a native-window
 > A/B check (89% across repeated headless runs), with identical menu pixels.
 > Graphics-copy paths and framebuffer lifetime are improved; see the
@@ -9,7 +12,7 @@
 > validated save/reload are documented in [macOS reliability](docs/macos-reliability.md).
 
 > **macOS fork:** native 64-bit Apple Silicon build verified through windowed
-> gameplay on `macos-native-verified`; Intel support is untested. See [macOS setup](docs/macos.md)
+> gameplay on the default `main` branch; Intel gameplay is untested. See [macOS setup](docs/macos.md)
 > and [verified test status](docs/macos-validation.md). The upstream
 > Windows/Linux status below does not establish macOS compatibility. Keep
 > culture-linked starts **off by default**; the new [startup repair](docs/macos-culture-starts.md)

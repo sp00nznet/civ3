@@ -80,3 +80,6 @@ build-*/
 .venv/
 build-macos*/
 Civilization III (recomp).command
+
+# Optional local toolkit / Finder bootstrap output
+.deps/
