@@ -176,6 +176,9 @@ def farm(d):
         if os.path.normcase(os.path.relpath(dirpath, src)) == os.path.normcase(os.path.join('Conquests', 'Saves', 'Auto')):
             continue                  # a case's autosaves are its own results
         for f in files:
+            # A native game's lock must never be shared by a hard-linked test farm.
+            if f == '.civ3-native.lock':
+                continue
             t = os.path.join(out, f)
             if f.lower().endswith('.ini'):
                 # Rewritten in place, not replaced: a link would share it with
@@ -212,6 +215,9 @@ def run(name, args, seconds, every):
     # menu; the game reports the missing Steam and plays on (docs/bringup.md).
     cmd = [HOST, '--headless', '--nosteam', '--run', '--watchdog', '600', '--play', str(seconds),
            '--record', mp4, '--game', game] + args
+    if sys.platform == 'darwin' or sys.platform.startswith('linux'):
+        # This harness owns its per-case video; normal user recordings remain no-clobber.
+        cmd += ['--overwrite-recording']
     with open(log, 'w', errors='replace') as f:
         try:
             code = subprocess.run(cmd, cwd=ROOT, stdout=f, stderr=subprocess.STDOUT,

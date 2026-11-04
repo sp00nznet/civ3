@@ -33,6 +33,9 @@
 #include "win32hle.h"
 #include "pe_loader.h"
 #include "host.h"
+#include "record_pipe.h"
+#include "host_options.h"
+#include "game_lock.h"
 
 #define CIV3_IMAGE_BASE 0x00400000u
 #define CIV3_GUEST_EXE  "C:\\Conquests\\Civ3Conquests.exe"
@@ -315,36 +318,98 @@ static void *milestones(void *unused) {
 static char g_record[PATH_MAX];
 static unsigned g_fps = 15;
 static long g_frames;
-static FILE *g_ffmpeg;
+static civ3_record_pipe g_encoder = {-1, -1};
+static int g_record_error, g_record_stopping, g_record_started, g_record_overwrite;
 static pthread_mutex_t g_rec_lock = PTHREAD_MUTEX_INITIALIZER;
-static void record_close(void) {
+static int record_close(void) {
     pthread_mutex_lock(&g_rec_lock);
-    if (g_ffmpeg) pclose(g_ffmpeg), g_ffmpeg = NULL, fprintf(stderr, "[record] -> %s\n", g_record);
+    if (!g_record_stopping) {
+        g_record_stopping = 1;
+        int result = civ3_record_finish(&g_encoder, 10000);
+        if (result || !g_record_started) {
+            fprintf(stderr, "[record] FAILED: encoder status %d (started=%d)\n", result, g_record_started);
+            g_record_error = 1;
+        } else if (!g_record_error) fprintf(stderr, "[record] -> %s\n", g_record);
+    }
+    int failed = g_record_error;
     pthread_mutex_unlock(&g_rec_lock);
+    return failed;
 }
-static void on_exit_close(int code) { (void)code; record_close(); }
+static void on_exit_close(int code) {
+    if (g_record[0] && record_close() && (code == 0 || code == 4)) {
+        fflush(stdout); fflush(stderr); _exit(5);
+    }
+}
 static void *recorder(void *unused) {
     (void)unused;
-    while (!g_menu_open || !g_screen) usleep(50000);
+    while (!g_menu_open) usleep(50000);
+    mach_enter();
     int w = g_screen_w, h = g_screen_h;
-    char cmd[PATH_MAX + 256];
-    snprintf(cmd, sizeof cmd, "ffmpeg -y -loglevel error -f rawvideo -pix_fmt bgr0 -s %dx%d -r %u -i - "
-             "-c:v libx264 -pix_fmt yuv420p '%s'", w, h, g_fps, g_record);
+    mach_leave();
+    size_t size = (size_t)w * h * 4;
+    uint32_t *frame = (uint32_t *)calloc(1, size);
     pthread_mutex_lock(&g_rec_lock);
-    g_ffmpeg = popen(cmd, "w");
+    if (g_record_stopping) { pthread_mutex_unlock(&g_rec_lock); free(frame); return NULL; }
+    if (!frame || civ3_record_start(&g_encoder, g_record, w, h, g_fps, g_record_overwrite)) {
+        fprintf(stderr, "[record] FAILED to start encoder: %s\n", frame ? strerror(errno) : "out of memory");
+        g_record_error = 1;
+        pthread_mutex_unlock(&g_rec_lock); free(frame);
+        if (g_frames) hle_exit(5);
+        return NULL;
+    }
+    g_record_started = 1;
     pthread_mutex_unlock(&g_rec_lock);
-    uint32_t *frame = (uint32_t *)malloc((size_t)w * h * 4);
-    for (long n = 0; g_ffmpeg; n++) {
+    for (long n = 0; ; ++n) {
         usleep(1000000u / g_fps);
-        if (g_screen_w == w && g_screen_h == h) memcpy(frame, g_screen, (size_t)w * h * 4);   /* else the last frame again */
+        /* Copy while the guest is paused, but never hold the machine lock
+         * while waiting for FFmpeg or its pipe. Lock ordering stays acyclic. */
+        mach_enter();
+        int same_size = g_screen && g_screen_w == w && g_screen_h == h;
+        if (same_size) memcpy(frame, g_screen, size);
+        mach_leave();
         pthread_mutex_lock(&g_rec_lock);
-        if (g_ffmpeg && fwrite(frame, 4, (size_t)w * h, g_ffmpeg) != (size_t)w * h) {
-            fprintf(stderr, "[record] ffmpeg is not taking frames: not recording\n");
-            pclose(g_ffmpeg), g_ffmpeg = NULL;
+        if (g_record_stopping) { pthread_mutex_unlock(&g_rec_lock); break; }
+        int failed = !same_size || civ3_record_write(&g_encoder, frame, size, 5000);
+        if (failed) {
+            fprintf(stderr, "[record] FAILED: %s\n", same_size ? strerror(errno) : "display size changed during recording");
+            g_record_error = 1;
         }
         pthread_mutex_unlock(&g_rec_lock);
-        if (g_frames && n + 1 == g_frames) { record_close(); hle_exit(0); }
+        if (failed || (g_frames && n + 1 == g_frames)) {
+            int error = record_close();
+            free(frame);
+            if (g_frames) hle_exit(error ? 5 : 0);
+            return NULL;
+        }
     }
+    free(frame); return NULL;
+}
+
+static unsigned number_option(const char *option, const char *value, uint32_t low, uint32_t high) {
+    uint32_t result;
+    if (!civ3_unsigned_option(value, low, high, &result)) {
+        fprintf(stderr, "Invalid %s: expected an integer from %u to %u\n", option, low, high); exit(1);
+    }
+    return result;
+}
+static void output_path(char *destination, size_t size, const char *path, const char *option) {
+    char cwd[PATH_MAX];
+    if (!*path || (path[0] != '/' && !getcwd(cwd, sizeof cwd))) {
+        fprintf(stderr, "Invalid output path for %s\n", option); exit(1);
+    }
+    int count = path[0] == '/' ? snprintf(destination, size, "%s", path) :
+                               snprintf(destination, size, "%s/%s", cwd, path);
+    if (count < 0 || (size_t)count >= size) { fprintf(stderr, "Output path too long for %s\n", option); exit(1); }
+}
+
+/* Signal handlers only set a flag. A normal thread finalizes the video and
+ * exits, so Ctrl-C/termination never calls non-async-safe encoder code. */
+static volatile sig_atomic_t g_stop_signal;
+static void request_stop(int sig) { if (!g_stop_signal) g_stop_signal = sig; }
+static void *shutdown_monitor(void *unused) {
+    (void)unused;
+    while (!g_stop_signal) usleep(50000);
+    hle_exit(128 + g_stop_signal);
     return NULL;
 }
 
@@ -360,6 +425,7 @@ int main(int argc, char **argv) {
     setvbuf(stderr, NULL, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
         int n = script_arg(argc, argv, i);
+        if (n < 0) return 1;
         if (n) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = 1;
@@ -367,30 +433,26 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--exe") && i + 1 < argc) exe = argv[++i];
         else if (!strcmp(argv[i], "--game") && i + 1 < argc) game = argv[++i];
         else if (!strcmp(argv[i], "--work") && i + 1 < argc) work = argv[++i];
-        else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) g_watchdog_s = (unsigned)strtoul(argv[++i], NULL, 0);
-        else if (!strcmp(argv[i], "--play") && i + 1 < argc) g_play_s = (unsigned)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) g_watchdog_s = number_option("--watchdog", argv[++i], 1, 86400);
+        else if (!strcmp(argv[i], "--play") && i + 1 < argc) g_play_s = number_option("--play", argv[++i], 1, 86400);
         else if (!strcmp(argv[i], "--trace")) win32hle_trace = 1;
         else if (!strcmp(argv[i], "--nosteam")) ;           /* the Windows host's: Steam is always absent here */
-        else if (!strcmp(argv[i], "--record") && i + 1 < argc) {
-            char cwd[PATH_MAX];                        /* absolute: the run chdirs into the game folder */
-            const char *p = argv[++i];
-            if (p[0] == '/') snprintf(g_record, sizeof g_record, "%s", p);
-            else snprintf(g_record, sizeof g_record, "%s/%s", getcwd(cwd, sizeof cwd) ? cwd : ".", p);
-        }
-        else if (!strcmp(argv[i], "--shot") && i + 1 < argc) {
-            char cwd[PATH_MAX];
-            const char *p = argv[++i];
-            if (p[0] == '/') snprintf(g_shot, sizeof g_shot, "%s", p);
-            else snprintf(g_shot, sizeof g_shot, "%s/%s", getcwd(cwd, sizeof cwd) ? cwd : ".", p);
-        }
-        else if (!strcmp(argv[i], "--frames") && i + 1 < argc) g_frames = strtol(argv[++i], NULL, 0);
-        else if (!strcmp(argv[i], "--fps") && i + 1 < argc) g_fps = (unsigned)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--record") && i + 1 < argc)
+            output_path(g_record, sizeof g_record, argv[++i], "--record");
+        else if (!strcmp(argv[i], "--shot") && i + 1 < argc)
+            output_path(g_shot, sizeof g_shot, argv[++i], "--shot");
+        else if (!strcmp(argv[i], "--frames") && i + 1 < argc) g_frames = number_option("--frames", argv[++i], 1, 2147483647u);
+        else if (!strcmp(argv[i], "--fps") && i + 1 < argc) g_fps = number_option("--fps", argv[++i], 1, 240);
+        else if (!strcmp(argv[i], "--overwrite-recording")) g_record_overwrite = 1;
         else {
-            printf("usage: civ3 [--run] [--headless] [--mute] [--record out.mp4] [--frames N] [--fps N]\n"
+            printf("usage: civ3 [--run] [--headless] [--mute] [--record out.mp4] [--overwrite-recording] [--frames N] [--fps 1..240]\n"
                    "            [--move x,y@s] [--click x,y@s] [--open x,y@s] [--key [c][s][a]+vk@s] [--wait VA@s] [--autopilot MS@s]\n"
                    "            [--exe work/Civ3Conquests.exe] [--game game] [--work work] [--watchdog S] [--play S] [--shot out.ppm] [--trace]\n");
             return !strcmp(argv[i], "--help") || !strcmp(argv[i], "-h") ? 0 : 1;
         }
+    }
+    if ((g_frames || g_record_overwrite) && !g_record[0]) {
+        fprintf(stderr, "--frames and --overwrite-recording require --record\n"); return 1;
     }
     char game_full[PATH_MAX], exe_full[PATH_MAX], work_full[PATH_MAX];
     if (!realpath(game, game_full)) { fprintf(stderr, "no game folder at %s\n", game); return 1; }
@@ -405,6 +467,19 @@ int main(int argc, char **argv) {
     for (int i = 0; i < NDLL; i++) {
         snprintf(g_dll[i].file, sizeof g_dll[i].file, "%s/%s", work_full, g_dll[i].name);
         if (access(g_dll[i].file, R_OK)) { fprintf(stderr, "no %s: run_lift.py --module (README, Linux)\n", g_dll[i].file); return 1; }
+    }
+    /* Claim the writable game directory before loading any game code. */
+    if (run) {
+        char lock_directory[PATH_MAX + 16];
+        snprintf(lock_directory, sizeof lock_directory, "%s/Conquests", game_full);
+        int lock = civ3_game_lock(lock_directory);
+        if (lock < 0) {
+            if (errno == EWOULDBLOCK || errno == EAGAIN)
+                fprintf(stderr, "This game installation is already running. Save and close that session first.\n");
+            else fprintf(stderr, "Cannot lock game installation: %s\n", strerror(errno));
+            return 75;
+        }
+        /* Intentionally retained until process exit; O_CLOEXEC keeps it out of FFmpeg. */
     }
     hle_set_drive('C', game_full);
     for (int i = 0; i < NDLL; i++)
@@ -457,6 +532,9 @@ int main(int argc, char **argv) {
     hle_screen_cursor_hook = hle_cursor_shown;          /* the system cursors, unless the game hides them */
     if (hle_screen_open("Civilization III: Conquests", 0, g_headless) != 0) return 1;
     hle_on_exit = on_exit_close;
+    signal(SIGINT, request_stop);
+    signal(SIGTERM, request_stop);
+    start_thread(shutdown_monitor);
     start_thread(milestones);
     if (g_watchdog_s || g_play_s) start_thread(watchdog);
     if (g_record[0]) start_thread(recorder);

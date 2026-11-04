@@ -17,6 +17,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <time.h>
+#include "script_options.h"
 #include "win32hle.h"
 
 #define WM_KEYDOWN     0x0100u
@@ -34,7 +36,6 @@
 extern volatile int g_menu_open;          /* main.c */
 int screen_changed(int snapshot);
 
-typedef struct { char kind; int x, y; double t; } ev_t;
 #define MAX_EV 256
 static ev_t g_ev[MAX_EV];
 static int g_nev;
@@ -43,32 +44,27 @@ static volatile uint32_t g_hwnd;
 void script_set_window(uint32_t hwnd) { g_hwnd = hwnd; }
 
 int script_arg(int argc, char **argv, int i) {
-    if (i + 1 >= argc || g_nev >= MAX_EV) return 0;
-    ev_t e = { 0 };
-    const char *a = argv[i + 1];
-    if (!strcmp(argv[i], "--move") || !strcmp(argv[i], "--click") || !strcmp(argv[i], "--open")) {
-        if (sscanf(a, "%d,%d@%lf", &e.x, &e.y, &e.t) != 3) return 0;
-        e.kind = argv[i][2];                             /* 'm', 'c' or 'o' */
-    } else if (!strcmp(argv[i], "--autopilot")) {
-        if (sscanf(a, "%d@%lf", &e.x, &e.t) != 2) return 0;
-        e.kind = 'a';
-    } else if (!strcmp(argv[i], "--wait")) {
-        if (sscanf(a, "%i@%lf", &e.x, &e.t) != 2) return 0;
-        e.kind = 'w';
-    } else if (!strcmp(argv[i], "--key")) {
-        const char *plus = strchr(a, '+');
-        if (plus) {
-            for (const char *m = a; m < plus; m++) e.y |= *m == 'c' ? 1 : *m == 's' ? 2 : *m == 'a' ? 4 : 0;
-            a = plus + 1;
+    ev_t e;
+    int parsed = civ3_parse_event(argv[i], i + 1 < argc ? argv[i + 1] : NULL, &e);
+    if (!parsed) return 0;
+    if (parsed < 0 || g_nev >= MAX_EV) {
+        fprintf(stderr, "Invalid scripted input %s (check value, range and time; maximum %d events)\n", argv[i], MAX_EV);
+        return -1;
+    }
+    if (e.kind == 'a')
+        for (int n = 0; n < g_nev; ++n) if (g_ev[n].kind == 'a') {
+            fprintf(stderr, "Only one --autopilot event is allowed\n"); return -1;
         }
-        if (sscanf(a, "%i@%lf", &e.x, &e.t) != 2) return 0;
-        e.kind = 'k';
-    } else return 0;
+    e.order = g_nev;
     g_ev[g_nev++] = e;
     return 2;
 }
 
-static void msleep(uint32_t ms) { usleep(ms * 1000u); }
+static void msleep(uint32_t ms) {
+    struct timespec t = {ms / 1000, (long)(ms % 1000) * 1000000};
+    while (nanosleep(&t, &t) && errno == EINTR) {}
+}
+
 static void post(uint32_t m, uint32_t w, uint32_t l) { mach_enter(); hle_post_message(g_hwnd, m, w, l); mach_leave(); }
 static void key_state(uint32_t vk, int down) { mach_enter(); hle_input_key_state(vk, down); mach_leave(); }
 
@@ -106,7 +102,7 @@ static void *autopilot(void *period) {
 
 static int cmp_ev(const void *a, const void *b) {
     double d = ((const ev_t *)a)->t - ((const ev_t *)b)->t;
-    return d < 0 ? -1 : d > 0;
+    return d < 0 ? -1 : d > 0 ? 1 : ((const ev_t *)a)->order - ((const ev_t *)b)->order;
 }
 
 static void *script(void *unused) {

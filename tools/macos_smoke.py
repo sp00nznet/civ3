@@ -41,20 +41,26 @@ def assess(returncode: int, log: str, image: Path) -> list[str]:
     return failures
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=ROOT / "build-macos/civ3")
     parser.add_argument("--timeout", type=int, default=120)
-    args = parser.parse_args()
-    if args.timeout < 10:
-        parser.error("--timeout must be at least 10 seconds")
+    parser.add_argument("--game", type=Path, default=ROOT / "game")
+    parser.add_argument("--work", type=Path, default=ROOT / "work")
+    parser.add_argument("--exe", type=Path, default=ROOT / "work/Civ3Conquests.exe")
+    args = parser.parse_args(argv)
+    if not 10 <= args.timeout <= 86400:
+        parser.error("--timeout must be between 10 and 86400 seconds")
     work = ROOT / "work"
     work.mkdir(exist_ok=True)
     image, log_path = work / "macos-menu.ppm", work / "macos-smoke.log"
     # Never let an old successful screenshot make a failed run look successful.
     image.unlink(missing_ok=True)
-    command = [str(args.binary.resolve()), "--headless", "--run", "--mute",
-               "--watchdog", str(args.timeout), "--play", "3", "--shot", str(image)]
+    command = [str(args.binary.expanduser().resolve()), "--headless", "--run", "--mute",
+               "--watchdog", str(args.timeout), "--play", "3", "--shot", str(image),
+               "--game", str(args.game.expanduser().resolve()),
+               "--work", str(args.work.expanduser().resolve()),
+               "--exe", str(args.exe.expanduser().resolve())]
     try:
         with log_path.open("w") as stream:
             result = subprocess.run(command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT,

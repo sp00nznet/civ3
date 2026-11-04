@@ -20,12 +20,12 @@ Local verification on **November 3, 2026**, not a claim of complete game compati
 | Check | Observed result |
 |---|---|
 | Upstream based-memory HLE self-tests | 12 passed natively on this Mac |
-| Setup, asset preflight, preference backup and smoke-verdict Python tests | 54 passed |
+| Setup, asset preflight, preference backup and smoke-verdict Python tests | 69 passed |
 | Miles guest-memory regression | Passed five synthetic MP3 open/decode/close cycles |
 | INI regression | Passed repeated key updates, insertion, deletion, case-independent sections, duplicate repair, failure and zero-size-buffer checks |
 | File-sharing regression | Passed bidirectional read/write sharing, inode aliases, no truncation on denial, mapped-byte preservation, and restriction release on close |
 | SDL ownership regression | Passed worker pump/draw/cursor/title checks; title changes are deferred until the owner pumps |
-| Synthetic-tests-only CMake build | All five native regression tests passed from a source-only staging directory with no game assets or generated game code |
+| Synthetic-tests-only CMake build | All seven native regression tests passed from a source-only staging directory with no game assets or generated game code |
 | Main executable import binding | 245 imports, zero unresolved |
 | Renderer / sound imports | 121 / 136 imports, zero unresolved |
 | Main menu | Reached; valid 1024x768 PPM, PNG visually inspected |
@@ -110,6 +110,22 @@ The detailed source paths and hashes are in ignored provenance JSON files.
 
 No game assets, game-derived C, proprietary binaries, fonts or saves are
 committed or distributed with this fork.
+
+## Launch and recording reliability follow-up
+
+The latest pass adds no-clobber shell-free recording, bounded encoder shutdown,
+recording finalization on interrupt, strict timing/input validation, and
+non-destructive duplicate-launch protection. **69 Python and seven native tests
+passed**, including all seven native tests from a source-only staging directory.
+Targeted safety helpers also passed address/undefined-behavior sanitizer checks.
+
+The rebuilt executable completed another compressed-save round trip from turn
+3 to turn 8, with five new autosaves and unchanged source data. Real FFmpeg
+captures covered quoted/punctuated filenames, existing-output protection,
+explicit overwrite, encoder/output failures, and SIGINT/SIGTERM finalization.
+Two consecutive runs of the original exit/recording play-test also passed.
+See [the detailed ledger](macos-reliability.md) for the exact binary hash,
+limitations and local evidence paths.
 
 ## Not yet established
 

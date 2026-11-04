@@ -89,6 +89,28 @@ Use the same `GEN_OPT` when launching through the build-and-run script to avoid
 switching the cached build back to the default. `JOBS` defaults to three to
 limit compiler memory use. `BUILD_DIR` selects a separate build directory.
 
+## Safe launching and recording
+
+Rerunning `./script/build_and_run.sh` no longer terminates an earlier game.
+Save and close it first. Kernel locks prevent duplicate launches against the
+same writable installation, including when the binary is started directly.
+A stale lock file does not require deletion. Separate private test installations
+can run at the same time.
+
+`--logs` creates a timestamped `work/macos-game-*.log` instead of overwriting the
+previous log. `--verify` accepts `--game`, `--work` and `--exe` for another setup.
+
+```sh
+./script/build_and_run.sh --logs
+./script/build_and_run.sh --record "work/A player's game.mp4" --fps 15
+```
+
+Video filenames are passed literally, without a shell. Existing recordings are
+not overwritten unless `--overwrite-recording` is supplied. Recording failures
+are reported; Ctrl-C and SIGTERM finalize the recording before exiting. Frame
+rates must be 1–240, and malformed scripted input is rejected before startup.
+See [reliability changes and test evidence](macos-reliability.md).
+
 ## Tests and evidence
 
 ```sh

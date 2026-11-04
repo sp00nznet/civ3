@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--game", type=Path, default=ROOT / "game")
     parser.add_argument("--work", type=Path, default=ROOT / "work")
     parser.add_argument("--exe", type=Path, default=ROOT / "work/Civ3Conquests.exe")
@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
         game = game.parent
     try:
         validate_assets(game)
-        for path in (args.exe, args.work / "jgl.dll", args.work / "sound.dll"):
+        for path in (args.exe.expanduser().resolve(), args.work.expanduser().resolve() / "jgl.dll", args.work.expanduser().resolve() / "sound.dll"):
             if not path.is_file():
                 raise RuntimeError(f"Missing runtime input: {path}. Run ./setup-macos.sh first.")
         for warning in settings_warnings(game):

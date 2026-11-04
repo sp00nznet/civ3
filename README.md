@@ -1,5 +1,8 @@
 # Civilization III: Conquests — Static Recompilation
 
+> **Reliability update:** safer relaunching, protected video recordings and
+> validated save/reload are documented in [macOS reliability](docs/macos-reliability.md).
+
 > **macOS fork:** native 64-bit Apple Silicon build verified through windowed
 > gameplay on `macos-native-verified`; Intel support is untested. See [macOS setup](docs/macos.md)
 > and [verified test status](docs/macos-validation.md). The upstream
