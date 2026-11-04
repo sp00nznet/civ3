@@ -1,5 +1,5 @@
 /*
- * Civilization III: Conquests - the native Linux host.
+ * Civilization III: Conquests - the native POSIX host (Linux and macOS).
  *
  * The same lifted C as the Windows build, on pcrecomp's runtime/win32hle
  * instead of runtime/native32: every Win32 call is answered by win32hle's
@@ -137,7 +137,10 @@ static void c_LoadLibraryA(void) {
         pe_image img;
         /* ponytail: another thread could map into the gap between these two
          * calls; a pe_loader call that maps over the hold would close it */
-        if (g_dll[i].held) munmap((void *)(uintptr_t)g_dll[i].base, g_dll[i].span);
+        if (g_dll[i].held) {
+            hle_vm_release(g_dll[i].base, g_dll[i].span);
+            g_dll[i].held = 0;
+        }
         if (recomp_pe_map(g_dll[i].file, &img) != 0 || img.base != g_dll[i].base)
             hle_fatal("cannot map %s at 0x%08X (run_lift.py --module, README)", g_dll[i].file, g_dll[i].base);
         char guest[64];
@@ -162,7 +165,7 @@ static uint32_t export_of(uint32_t base, uint32_t which) {
     if (which >= 0x10000u) {
         idx = ~0u;
         for (uint32_t k = 0; k < nnames; k++)
-            if (!strcmp((const char *)(uintptr_t)(base + MEM32(names + 4 * k)), (const char *)(uintptr_t)which)) { idx = MEM16(ords + 2 * k); break; }
+            if (!strcmp((const char *)hle_ptr(base + MEM32(names + 4 * k)), (const char *)hle_ptr(which))) { idx = MEM16(ords + 2 * k); break; }
     }
     return idx < nfun ? base + MEM32(funcs + 4 * idx) : 0;
 }
@@ -405,8 +408,8 @@ int main(int argc, char **argv) {
     }
     hle_set_drive('C', game_full);
     for (int i = 0; i < NDLL; i++)
-        if (mmap((void *)(uintptr_t)g_dll[i].base, g_dll[i].span, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) == MAP_FAILED)
-            fprintf(stderr, "cannot hold 0x%08X for %s\n", g_dll[i].base, g_dll[i].name);
+        if (hle_vm_reserve(g_dll[i].base, g_dll[i].span) != g_dll[i].base)
+            hle_fatal("cannot hold 0x%08X for %s", g_dll[i].base, g_dll[i].name);
         else g_dll[i].held = 1;
 
     signal(SIGPIPE, SIG_IGN);
@@ -430,7 +433,7 @@ int main(int argc, char **argv) {
     g_hle_CreateWindowExA = hle_fn(win32hle_user32, "CreateWindowExA");
     win32hle_register(g_civ3_shims);   /* first: the game's own answers win */
     recomp_host_init();
-    printf("Civilization III: Conquests recomp host (native Linux)\n  lifted functions in dispatch: %u\n",
+    printf("Civilization III: Conquests recomp host (native POSIX)\n  lifted functions in dispatch: %u\n",
            recomp_dispatch_count);
 
     pe_image img;

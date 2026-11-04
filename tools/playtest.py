@@ -31,7 +31,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The native Linux build when this is Linux (README, Linux, native).
-HOST = os.path.join(ROOT, 'build-linux', 'civ3') if sys.platform.startswith('linux') else os.path.join(ROOT, 'build', 'civ3.exe')
+HOST = (os.path.join(ROOT, 'build-macos', 'civ3') if sys.platform == 'darwin' else
+        os.path.join(ROOT, 'build-linux', 'civ3') if sys.platform.startswith('linux') else
+        os.path.join(ROOT, 'build', 'civ3.exe'))
 OUT = os.path.join(ROOT, 'work', 'tests')
 
 # Main menu items, 1024x768 client pixels, clicked at x=240: an item's hit box

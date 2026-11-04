@@ -1,15 +1,20 @@
 # =============================================================================
-# Civilization III: Conquests - static recompilation host (32-bit, MSVC x86)
+# Civilization III: Conquests - static recompilation host (Win32/Linux i386 and native macOS 64-bit)
 #
 #   py -3 run_lift.py        # -> src/recomp/gen/  (needs work/functions.json)
 #   build.cmd                # vcvarsall x86 + CMake + Ninja -> build/civ3.exe
-#   build\themovies.exe --run --watchdog 60
+#   build\civ3.exe --run --watchdog 60
 # =============================================================================
 cmake_minimum_required(VERSION 3.20)
 project(civ3 C)
 
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
-  message(FATAL_ERROR "the host must be 32-bit: use build.cmd (vcvarsall x86), or on Linux build-linux.sh")
+option(CIV3_RUNTIME_TESTS_ONLY "Build synthetic macOS runtime tests without game data or generated C" OFF)
+
+if(NOT APPLE AND NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+  message(FATAL_ERROR "Windows/Linux hosts must be 32-bit: use build.cmd or build-linux.sh. macOS uses a native 64-bit host.")
+endif()
+if(APPLE AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+  message(FATAL_ERROR "macOS requires a native 64-bit toolchain (arm64 or x86_64)")
 endif()
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
@@ -17,16 +22,16 @@ endif()
 
 set(PCRECOMP "${CMAKE_SOURCE_DIR}/../tools" CACHE PATH "pcrecomp checkout")
 file(GLOB GEN_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/recomp/gen/*.c")
-if(NOT GEN_SOURCES)
+if(NOT GEN_SOURCES AND NOT CIV3_RUNTIME_TESTS_ONLY)
   message(FATAL_ERROR "src/recomp/gen is empty -- run `py -3 run_lift.py` first")
 endif()
 
 # ---- native Linux: the lifted C on runtime/win32hle (cmake/linux-i386.cmake).
 # jgl.dll and sound.dll are lifted too (run_lift.py --module); the table that
 # finds all three is src/linux/dispatch.c, not the exe's recomp_dispatch.c.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   file(GLOB DLL_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/recomp/gen_jgl/*.c" "${CMAKE_SOURCE_DIR}/src/recomp/gen_sound/*.c")
-  if(NOT DLL_SOURCES)
+  if(NOT DLL_SOURCES AND NOT CIV3_RUNTIME_TESTS_ONLY)
     message(FATAL_ERROR "src/recomp/gen_jgl is empty -- run `run_lift.py --all --module jgl` and `--module sound` (README, Linux)")
   endif()
   list(FILTER GEN_SOURCES EXCLUDE REGEX "recomp_dispatch\.c$")
@@ -37,20 +42,86 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(HLE ${PCRECOMP}/runtime/win32hle)
   file(GLOB HLE_SOURCES CONFIGURE_DEPENDS "${HLE}/*.c")
   list(FILTER HLE_SOURCES EXCLUDE REGEX "_selftest\.c$")
-  add_executable(civ3 src/linux/main.c src/linux/script.c src/linux/dispatch.c ${HLE_SOURCES} ${GEN_SOURCES} ${DLL_SOURCES})
-  target_include_directories(civ3 PRIVATE src/linux ${HLE} ${PCRECOMP}/runtime/recomp32)
-  # 64-bit file offsets: a 32-bit stat fails with EOVERFLOW on a disk with
-  # 64-bit inode numbers (XFS, Btrfs, WSL's /mnt), and the game's files with it.
-  target_compile_definitions(civ3 PRIVATE RECOMP_RETADDR=0u RECOMP_FLAT_MEMORY RECOMP_LOCAL_REGS HLE_WITH_FFMPEG)
-  set_source_files_properties(src/linux/main.c src/linux/script.c ${HLE_SOURCES} PROPERTIES COMPILE_DEFINITIONS "_FILE_OFFSET_BITS=64")
-  set(GEN_OPT "-O2" CACHE STRING "optimisation for the generated C")
-  set_source_files_properties(${GEN_SOURCES} ${DLL_SOURCES} PROPERTIES COMPILE_OPTIONS "-w;${GEN_OPT};-fno-strict-aliasing;-fwrapv")
-  target_compile_options(civ3 PRIVATE -fno-strict-aliasing -fwrapv)
-  target_link_libraries(civ3 PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_TTF PkgConfig::FFMPEG pthread m)
-  # Linked at 0x20000000: at the default 0x08048000 the 110 MB of code end
-  # near 0x0F000000, and the heap that starts after them (at a random offset)
-  # reached 0x10000000, where jgl.dll goes, in some runs.
-  target_link_options(civ3 PRIVATE -Wl,-Ttext-segment=0x20000000)
+  if(APPLE)
+    # Patch only a build-directory copy. The pinned toolkit stays untouched.
+    find_program(PATCH_EXECUTABLE patch REQUIRED)
+    set(MACOS_HLE_DIR "${CMAKE_CURRENT_BINARY_DIR}/pcrecomp-macos")
+    file(MAKE_DIRECTORY "${MACOS_HLE_DIR}")
+    foreach(PATCH_SPEC IN ITEMS "mss.c|pcrecomp-mss-guest-memory.patch"
+                                "kernel32_ext.c|pcrecomp-profile-updates.patch"
+                                "screen.c|pcrecomp-screen-thread.patch")
+      string(REPLACE "|" ";" PATCH_FIELDS "${PATCH_SPEC}")
+      list(GET PATCH_FIELDS 0 PATCH_SOURCE)
+      list(GET PATCH_FIELDS 1 PATCH_FILE)
+      configure_file("${HLE}/${PATCH_SOURCE}" "${MACOS_HLE_DIR}/${PATCH_SOURCE}" COPYONLY)
+      execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/${PATCH_SOURCE}"
+                      "${CMAKE_SOURCE_DIR}/patches/${PATCH_FILE}" RESULT_VARIABLE PATCH_RESULT)
+      if(NOT PATCH_RESULT EQUAL 0)
+        message(FATAL_ERROR "${PATCH_FILE} failed; use the pinned pcrecomp revision")
+      endif()
+      list(REMOVE_ITEM HLE_SOURCES "${HLE}/${PATCH_SOURCE}")
+      list(APPEND HLE_SOURCES "${MACOS_HLE_DIR}/${PATCH_SOURCE}")
+      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                   "${CMAKE_SOURCE_DIR}/patches/${PATCH_FILE}")
+    endforeach()
+  endif()
+  if(NOT CIV3_RUNTIME_TESTS_ONLY)
+    add_executable(civ3 src/linux/main.c src/linux/script.c src/linux/dispatch.c ${HLE_SOURCES} ${GEN_SOURCES} ${DLL_SOURCES})
+    target_include_directories(civ3 PRIVATE src/linux ${HLE} ${PCRECOMP}/runtime/recomp32)
+    # 64-bit file offsets: a 32-bit stat fails with EOVERFLOW on a disk with
+    # 64-bit inode numbers (XFS, Btrfs, WSL's /mnt), and the game's files with it.
+    target_compile_definitions(civ3 PRIVATE RECOMP_RETADDR=0u RECOMP_LOCAL_REGS HLE_WITH_FFMPEG)
+    if(APPLE)
+      if(NOT EXISTS "${HLE}/guest_mem.c")
+        message(FATAL_ERROR "pcrecomp is too old: macOS needs the based guest-memory runtime")
+      endif()
+      # Guest addresses remain 32-bit offsets; do not truncate native pointers.
+      target_compile_definitions(civ3 PRIVATE RECOMP_MEM_BASE=0x100000000000ull)
+    else()
+      target_compile_definitions(civ3 PRIVATE RECOMP_FLAT_MEMORY)
+    endif()
+    set_source_files_properties(src/linux/main.c src/linux/script.c ${HLE_SOURCES} PROPERTIES COMPILE_DEFINITIONS "_FILE_OFFSET_BITS=64")
+    set(GEN_OPT "-O2" CACHE STRING "optimisation for the generated C")
+    set_source_files_properties(${GEN_SOURCES} ${DLL_SOURCES} PROPERTIES COMPILE_OPTIONS "-w;${GEN_OPT};-fno-strict-aliasing;-fwrapv")
+    target_compile_options(civ3 PRIVATE -fno-strict-aliasing -fwrapv)
+    target_link_libraries(civ3 PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_TTF PkgConfig::FFMPEG pthread m)
+    # Linked at 0x20000000: at the default 0x08048000 the 110 MB of code end
+    # near 0x0F000000, and the heap that starts after them (at a random offset)
+    # reached 0x10000000, where jgl.dll goes, in some runs.
+    if(NOT APPLE)
+      target_link_options(civ3 PRIVATE -Wl,-Ttext-segment=0x20000000)
+    endif()
+  endif()
+  if(APPLE)
+    include(CTest)
+    if(BUILD_TESTING)
+      find_program(FFMPEG_EXECUTABLE ffmpeg REQUIRED)
+      add_executable(civ3_mss_test tests/mss_guest_selftest.c ${HLE_SOURCES})
+      target_include_directories(civ3_mss_test PRIVATE ${HLE} ${PCRECOMP}/runtime/recomp32)
+      target_compile_definitions(civ3_mss_test PRIVATE RECOMP_RETADDR=0u
+                                 RECOMP_MEM_BASE=0x100000000000ull HLE_WITH_FFMPEG)
+      target_compile_options(civ3_mss_test PRIVATE -fno-strict-aliasing -fwrapv)
+      target_link_libraries(civ3_mss_test PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_TTF PkgConfig::FFMPEG pthread m)
+      add_executable(civ3_profile_test tests/profile_selftest.c ${HLE_SOURCES})
+      target_include_directories(civ3_profile_test PRIVATE ${HLE} ${PCRECOMP}/runtime/recomp32)
+      target_compile_definitions(civ3_profile_test PRIVATE RECOMP_RETADDR=0u
+                                 RECOMP_MEM_BASE=0x100000000000ull HLE_WITH_FFMPEG)
+      target_compile_options(civ3_profile_test PRIVATE -fno-strict-aliasing -fwrapv)
+      target_link_libraries(civ3_profile_test PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_TTF PkgConfig::FFMPEG pthread m)
+      add_executable(civ3_screen_test tests/screen_thread_selftest.c ${HLE_SOURCES})
+      target_include_directories(civ3_screen_test PRIVATE ${HLE} ${PCRECOMP}/runtime/recomp32)
+      target_compile_definitions(civ3_screen_test PRIVATE RECOMP_RETADDR=0u
+                                 RECOMP_MEM_BASE=0x100000000000ull HLE_WITH_FFMPEG)
+      target_compile_options(civ3_screen_test PRIVATE -fno-strict-aliasing -fwrapv)
+      target_link_libraries(civ3_screen_test PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_TTF PkgConfig::FFMPEG pthread m)
+      add_test(NAME macos_screen_thread COMMAND civ3_screen_test)
+      set_tests_properties(macos_screen_thread PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+      add_test(NAME macos_profile_updates COMMAND civ3_profile_test)
+      add_test(NAME macos_miles_guest_memory
+               COMMAND bash "${CMAKE_SOURCE_DIR}/tests/run_mss_guest_test.sh"
+                       $<TARGET_FILE:civ3_mss_test> "${FFMPEG_EXECUTABLE}")
+    endif()
+  endif()
   return()
 endif()
 
