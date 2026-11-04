@@ -1,0 +1,45 @@
+name: native host checks
+
+on:
+  push:
+    branches: [main, macos-native]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    # Standard hosted runners only; no larger/paid runner labels.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pinned portable runtime
+        shell: bash
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/sp00nznet/pcrecomp.git .deps/pcrecomp
+          git -C .deps/pcrecomp checkout --detach "$(cat pcrecomp-revision.txt)"
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libsdl2-dev libsdl2-ttf-dev fonts-liberation libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install cmake ninja pkgconf sdl2 sdl2_ttf ffmpeg
+      - name: Setup checks
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Configure synthetic guests
+        run: cmake -S . -B build-check -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCIV3_BUILD_GAME=OFF -DCIV3_BUILD_TESTS=ON
+      - name: Build actual host and runtime
+        run: cmake --build build-check --parallel 3
+      - name: Exercise guest memory, DLLs, imports, graphics and window startup
+        run: ctest --test-dir build-check --output-on-failure

@@ -1,5 +1,10 @@
 # Civilization III: Conquests — Static Recompilation
 
+> **macOS port branch:** native 64-bit Apple Silicon/Intel build support and
+> a resumable Mac setup are in [docs/macos.md](docs/macos.md). The port is
+> experimental; synthetic host tests are separate from full game validation
+> on a real Mac. Start with `./setup-macos.sh --game-dir "/path/to/Complete"`.
+
 A static recompilation of **Sid Meier's Civilization III: Conquests**
 (Firaxis, 2003; the 2015 Steam "Complete" build) from the shipping Win32
 executable to C, compiled fresh and run natively on modern Windows, and on

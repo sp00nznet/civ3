@@ -30,6 +30,7 @@ venv/
 # derived from it lands in work/.
 original/
 game/
+/game
 disc/
 *.iso
 *.bin
@@ -75,3 +76,7 @@ src/recomp/gen_jgl/
 src/recomp/gen_sound/
 build-linux
 build-*/
+
+# macOS setup: private runtime checkout, resumable build and Finder launcher
+.deps/
+Play-Civilization-III.command

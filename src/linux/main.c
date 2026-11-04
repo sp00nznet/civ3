@@ -1,5 +1,5 @@
 /*
- * Civilization III: Conquests - the native Linux host.
+ * Civilization III: Conquests - the native POSIX host (Linux and macOS).
  *
  * The same lifted C as the Windows build, on pcrecomp's runtime/win32hle
  * instead of runtime/native32: every Win32 call is answered by win32hle's
@@ -14,8 +14,9 @@
  * force-feedback mouse, OpenGL) are answered here as absent, and Miles by
  * win32hle's mss.c.
  *
- * Linked non-PIE at 0x20000000 (CMakeLists.txt), so the guest's
- * 0x00400000..0x00CF7000 and the DLLs at 0x10000000 are free.
+ * On a 64-bit host, win32hle keeps the guest's address space in a separate
+ * mapping. Guest addresses must go through hle_ptr/MEM32, never a C cast.
+ * The 32-bit Linux build is linked high to leave the guest's images free.
  */
 #define _GNU_SOURCE
 #include <stdint.h>
@@ -27,7 +28,6 @@
 #include <unistd.h>
 #include <limits.h>
 #include <pthread.h>
-#include <sys/mman.h>
 #include <execinfo.h>
 
 #include "win32hle.h"
@@ -104,11 +104,12 @@ static void c_UnregisterClassA(void) { RET(1, 2); }
 
 /* ---- the lifted DLLs ------------------------------------------------------ */
 
-/* Their ranges are held from the start (main): the game loads them after
- * threads and file mappings have had the chance to land there. */
-static struct { const char *name; uint32_t base, span; char file[PATH_MAX]; int loaded, held; } g_dll[] = {
-    { "jgl.dll",   0x10000000u, 0x77000u, "", 0, 0 },
-    { "sound.dll", 0x10080000u, 0xBB000u, "", 0, 0 },  /* rebased: jgl has its 0x10000000 */
+/* Map both DLLs before the guest heap or threads can occupy their addresses.
+ * Binding and DllMain still happen at LoadLibrary time. Keeping the actual
+ * mapping also avoids a release/re-map race and works with 16 KB Mac pages. */
+static struct { const char *name; uint32_t base; char file[PATH_MAX]; int loaded; pe_image image; } g_dll[] = {
+    { .name = "jgl.dll",   .base = 0x10000000u },
+    { .name = "sound.dll", .base = 0x10080000u },  /* rebased: jgl has its 0x10000000 */
 };
 #define NDLL (int)(sizeof g_dll / sizeof *g_dll)
 
@@ -134,12 +135,7 @@ static void c_LoadLibraryA(void) {
     int i = name ? lifted_dll(name) : -1;
     if (i < 0) { g_hle_LoadLibraryA(); return; }
     if (!g_dll[i].loaded) {
-        pe_image img;
-        /* ponytail: another thread could map into the gap between these two
-         * calls; a pe_loader call that maps over the hold would close it */
-        if (g_dll[i].held) munmap((void *)(uintptr_t)g_dll[i].base, g_dll[i].span);
-        if (recomp_pe_map(g_dll[i].file, &img) != 0 || img.base != g_dll[i].base)
-            hle_fatal("cannot map %s at 0x%08X (run_lift.py --module, README)", g_dll[i].file, g_dll[i].base);
+        pe_image img = g_dll[i].image;
         char guest[64];
         snprintf(guest, sizeof guest, "C:\\Conquests\\%s", g_dll[i].name);
         hle_module_add(guest, img.base, img.resource_rva, img.resource_size, 0);
@@ -162,7 +158,7 @@ static uint32_t export_of(uint32_t base, uint32_t which) {
     if (which >= 0x10000u) {
         idx = ~0u;
         for (uint32_t k = 0; k < nnames; k++)
-            if (!strcmp((const char *)(uintptr_t)(base + MEM32(names + 4 * k)), (const char *)(uintptr_t)which)) { idx = MEM16(ords + 2 * k); break; }
+            if (!strcmp((const char *)hle_ptr(base + MEM32(names + 4 * k)), (const char *)hle_ptr(which))) { idx = MEM16(ords + 2 * k); break; }
     }
     return idx < nfun ? base + MEM32(funcs + 4 * idx) : 0;
 }
@@ -404,10 +400,12 @@ int main(int argc, char **argv) {
         if (access(g_dll[i].file, R_OK)) { fprintf(stderr, "no %s: run_lift.py --module (README, Linux)\n", g_dll[i].file); return 1; }
     }
     hle_set_drive('C', game_full);
-    for (int i = 0; i < NDLL; i++)
-        if (mmap((void *)(uintptr_t)g_dll[i].base, g_dll[i].span, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) == MAP_FAILED)
-            fprintf(stderr, "cannot hold 0x%08X for %s\n", g_dll[i].base, g_dll[i].name);
-        else g_dll[i].held = 1;
+    for (int i = 0; i < NDLL; i++) {
+        if (recomp_pe_map(g_dll[i].file, &g_dll[i].image) != 0 || g_dll[i].image.base != g_dll[i].base) {
+            fprintf(stderr, "cannot map %s at 0x%08X (run_lift.py --module)\n", g_dll[i].file, g_dll[i].base);
+            return 1;
+        }
+    }
 
     signal(SIGPIPE, SIG_IGN);
     { void *f[1]; backtrace(f, 1); }                     /* loads libgcc now, not in the fault handler */
@@ -430,8 +428,13 @@ int main(int argc, char **argv) {
     g_hle_CreateWindowExA = hle_fn(win32hle_user32, "CreateWindowExA");
     win32hle_register(g_civ3_shims);   /* first: the game's own answers win */
     recomp_host_init();
-    printf("Civilization III: Conquests recomp host (native Linux)\n  lifted functions in dispatch: %u\n",
-           recomp_dispatch_count);
+    printf("Civilization III: Conquests recomp host (native %s, %zu-bit)\n  lifted functions in dispatch: %u\n",
+#ifdef __APPLE__
+           "macOS",
+#else
+           "Linux",
+#endif
+           sizeof(void *) * 8, recomp_dispatch_count);
 
     pe_image img;
     if (recomp_pe_map(exe_full, &img) != 0 || img.base != CIV3_IMAGE_BASE) {
