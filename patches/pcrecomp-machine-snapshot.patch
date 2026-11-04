@@ -1,0 +1,47 @@
+--- host_lite.c
++++ host_lite.c
+@@ -130,20 +130,36 @@
+ typedef struct { regs_t r; int depth, inited; } mstate;
+ static __thread mstate g_ms;
+ 
++static void mach_init_thread(void) {
++    if (!g_ms.inited) {
++        uint32_t lo = hle_vm_reserve(0, GUEST_STACK);
++        if (!lo) hle_fatal("no guest memory for a thread's stack");
++        g_ms.r.esp = lo + GUEST_STACK - 64;
++        g_ms.r.fs = make_tib(lo, lo + GUEST_STACK);
++        g_ms.r.fpu_cw = 0x027F;
++        g_ms.inited = 1;
++    }
++}
+ void mach_enter(void) {
+     if (g_ms.depth++ == 0) {
+-        if (!g_ms.inited) {
+-            uint32_t lo = hle_vm_reserve(0, GUEST_STACK);
+-            if (!lo) hle_fatal("no guest memory for a thread's stack");
+-            g_ms.r.esp    = lo + GUEST_STACK - 64;
+-            g_ms.r.fs     = make_tib(lo, lo + GUEST_STACK);
+-            g_ms.r.fpu_cw = 0x027F;
+-            g_ms.inited   = 1;
+-        }
++        mach_init_thread();
+         mach_take();
+         regs_load(&g_ms.r);
+     }
+ }
++/* Read-only watchdog/capture paths must not hang indefinitely behind a stuck
++ * guest. Failed attempts neither allocate a stack nor touch guest registers. */
++int mach_try_enter(void) {
++    if (g_ms.depth) { ++g_ms.depth; return 1; }
++    if (pthread_mutex_trylock(&g_mach)) return 0;
++    mach_init_thread();
++    g_ms.depth = 1;
++    g_owner_gen++;
++    hle_dbg_takes++;
++    regs_load(&g_ms.r);
++    return 1;
++}
++
+ void mach_leave(void) {
+     if (--g_ms.depth == 0) {
+         regs_save(&g_ms.r);

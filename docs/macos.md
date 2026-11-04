@@ -63,6 +63,19 @@ input executable/DLLs, lifter, Python requirements, and pinned toolkit revision.
 An incomplete stage or a lift with errors/stubs is not marked successful.
 `./setup-macos.sh --check` performs read-only prerequisite and game checks.
 
+## Performance and display stability
+
+The Mac host paces empty main-menu polls by 2 ms, without pacing gameplay or
+worker threads. `--menu-idle-ms 0` disables that policy for troubleshooting;
+values 0-16 are accepted. A local native-window comparison consumed 85% less
+menu CPU with identical pixels; repeated headless comparisons measured 89%.
+These are not whole-game FPS or battery-life figures.
+
+Common true-color graphics copies now use a checked fast path. Display changes
+refresh active/saved window contexts before freeing old buffers; screenshot
+snapshots are synchronized, and output failures are reported. See
+[performance methods and stability checks](macos-performance.md).
+
 ## Build and debugging
 
 ```sh

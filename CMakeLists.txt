@@ -49,11 +49,23 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     file(MAKE_DIRECTORY "${MACOS_HLE_DIR}" "${MACOS_HLE_DIR}/staging")
     foreach(PATCH_SPEC IN ITEMS "mss.c|pcrecomp-mss-guest-memory.patch"
                                 "kernel32_ext.c|pcrecomp-profile-updates.patch"
-                                "screen.c|pcrecomp-screen-thread.patch")
+                                "screen.c|pcrecomp-screen-thread.patch"
+                                "gdidc.c|pcrecomp-gdi-performance.patch"
+                                "host_lite.c|pcrecomp-machine-snapshot.patch")
       string(REPLACE "|" ";" PATCH_FIELDS "${PATCH_SPEC}")
       list(GET PATCH_FIELDS 0 PATCH_SOURCE)
       list(GET PATCH_FIELDS 1 PATCH_FILE)
       configure_file("${HLE}/${PATCH_SOURCE}" "${MACOS_HLE_DIR}/staging/${PATCH_SOURCE}" COPYONLY)
+      if(PATCH_SOURCE STREQUAL "gdidc.c")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/gdidc.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-window-dc-lifetime.patch"
+                        RESULT_VARIABLE DC_LIFETIME_RESULT)
+        if(NOT DC_LIFETIME_RESULT EQUAL 0)
+          message(FATAL_ERROR "Saved-window-DC lifetime patch failed; use the pinned pcrecomp revision")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-window-dc-lifetime.patch")
+      endif()
       execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/${PATCH_SOURCE}"
                       "${CMAKE_SOURCE_DIR}/patches/${PATCH_FILE}" RESULT_VARIABLE PATCH_RESULT)
       if(NOT PATCH_RESULT EQUAL 0)
@@ -82,6 +94,36 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
                    "${CMAKE_SOURCE_DIR}/patches/${PATCH_FILE}")
     endforeach()
   endif()
+  if(NOT APPLE)
+    # main.c is shared with Linux. It must not free an old framebuffer while
+    # an upstream SaveDC snapshot still references it. No Mac-only pacing or
+    # optimized blit implementation is enabled by this compatibility repair.
+    find_program(PATCH_EXECUTABLE patch REQUIRED)
+    set(POSIX_HLE_DIR "${CMAKE_CURRENT_BINARY_DIR}/pcrecomp-posix")
+    file(MAKE_DIRECTORY "${POSIX_HLE_DIR}/staging")
+    configure_file("${HLE}/gdidc.c" "${POSIX_HLE_DIR}/staging/gdidc.c" COPYONLY)
+    execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${POSIX_HLE_DIR}/staging/gdidc.c"
+                    "${CMAKE_SOURCE_DIR}/patches/pcrecomp-window-dc-lifetime.patch"
+                    RESULT_VARIABLE DC_LIFETIME_RESULT)
+    if(NOT DC_LIFETIME_RESULT EQUAL 0)
+      message(FATAL_ERROR "Saved-window-DC lifetime patch failed; use the pinned pcrecomp revision")
+    endif()
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${POSIX_HLE_DIR}/staging/gdidc.c" "${POSIX_HLE_DIR}/gdidc.c"
+                    RESULT_VARIABLE DC_COPY_RESULT)
+    if(NOT DC_COPY_RESULT EQUAL 0)
+      message(FATAL_ERROR "Could not stage saved-window-DC lifetime repair")
+    endif()
+    list(REMOVE_ITEM HLE_SOURCES "${HLE}/gdidc.c")
+    list(APPEND HLE_SOURCES "${POSIX_HLE_DIR}/gdidc.c")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${CMAKE_SOURCE_DIR}/patches/pcrecomp-window-dc-lifetime.patch")
+  endif()
+  if(APPLE)
+    # Optimize only the profiled pixel-transfer layer; the lifted game and
+    # thread scheduler retain their previously tested compiler settings.
+    set_source_files_properties("${MACOS_HLE_DIR}/gdidc.c" PROPERTIES COMPILE_OPTIONS "-O2;-fno-strict-aliasing;-fwrapv")
+  endif()
   option(CIV3_CULTURE_START_FIX "Repair pending-race lookups during culture-linked starts on macOS" ON)
   if(APPLE AND NOT CIV3_RUNTIME_TESTS_ONLY AND CIV3_CULTURE_START_FIX)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -99,7 +141,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     include("${CULTURE_OVERLAY}/sources.cmake")
   endif()
   if(NOT CIV3_RUNTIME_TESTS_ONLY)
-    add_executable(civ3 src/linux/main.c src/linux/record_pipe.c src/linux/game_lock.c src/linux/script.c src/linux/dispatch.c ${HLE_SOURCES} ${GEN_SOURCES} ${DLL_SOURCES})
+    add_executable(civ3 src/linux/main.c src/linux/framebuffer.c src/linux/record_pipe.c src/linux/game_lock.c src/linux/script.c src/linux/dispatch.c ${HLE_SOURCES} ${GEN_SOURCES} ${DLL_SOURCES})
     target_include_directories(civ3 PRIVATE src/linux ${HLE} ${PCRECOMP}/runtime/recomp32)
     # 64-bit file offsets: a 32-bit stat fails with EOVERFLOW on a disk with
     # 64-bit inode numbers (XFS, Btrfs, WSL's /mnt), and the game's files with it.
@@ -140,6 +182,23 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
       add_executable(civ3_culture_test tests/culture_start_selftest.c)
       target_include_directories(civ3_culture_test PRIVATE src/linux)
       add_test(NAME macos_culture_pending_race COMMAND civ3_culture_test)
+      add_executable(civ3_framebuffer_test tests/framebuffer_selftest.c src/linux/framebuffer.c)
+      target_include_directories(civ3_framebuffer_test PRIVATE src/linux)
+      target_link_libraries(civ3_framebuffer_test PRIVATE pthread)
+      add_test(NAME macos_framebuffer_lifetime COMMAND civ3_framebuffer_test)
+      add_executable(civ3_snapshot_test tests/machine_snapshot_selftest.c ${HLE_SOURCES})
+      target_include_directories(civ3_snapshot_test PRIVATE src/linux ${HLE} ${PCRECOMP}/runtime/recomp32)
+      target_compile_definitions(civ3_snapshot_test PRIVATE RECOMP_RETADDR=0u RECOMP_MEM_BASE=0x100000000000ull HLE_WITH_FFMPEG)
+      target_compile_options(civ3_snapshot_test PRIVATE -fno-strict-aliasing -fwrapv)
+      target_link_libraries(civ3_snapshot_test PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_TTF PkgConfig::FFMPEG pthread m)
+      add_test(NAME macos_machine_snapshots COMMAND civ3_snapshot_test)
+      set_tests_properties(macos_machine_snapshots PROPERTIES TIMEOUT 5)
+      add_executable(civ3_gdi_perf_test tests/gdi_performance_selftest.c ${HLE_SOURCES})
+      target_include_directories(civ3_gdi_perf_test PRIVATE ${HLE} ${PCRECOMP}/runtime/recomp32)
+      target_compile_definitions(civ3_gdi_perf_test PRIVATE RECOMP_RETADDR=0u RECOMP_MEM_BASE=0x100000000000ull HLE_WITH_FFMPEG)
+      target_compile_options(civ3_gdi_perf_test PRIVATE -fno-strict-aliasing -fwrapv)
+      target_link_libraries(civ3_gdi_perf_test PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_TTF PkgConfig::FFMPEG pthread m)
+      add_test(NAME macos_graphics_pixels COMMAND civ3_gdi_perf_test)
       add_executable(civ3_mss_test tests/mss_guest_selftest.c ${HLE_SOURCES})
       target_include_directories(civ3_mss_test PRIVATE ${HLE} ${PCRECOMP}/runtime/recomp32)
       target_compile_definitions(civ3_mss_test PRIVATE RECOMP_RETADDR=0u

@@ -2,6 +2,26 @@
 
 Local verification on **November 3, 2026**, not a claim of complete game compatibility.
 
+## Latest performance and stability pass
+
+The final executable for this pass is
+`c08b55adf7c2827b5d6ad158c15e29644f82f6a7a93bd448faff275e78061881`.
+**74 Python tests and 10 native tests passed**, including a clean source-only
+native build. The prior measurements below remain historical evidence for the
+versions named in their individual reports.
+
+The latest build reduced measured main-menu CPU time by **89.07%** across three
+headless runs per version and **85.33%** in one actual native-window pair, with
+identical menu framebuffers. Graphics microbenchmarks are faster, but no whole-game
+FPS multiplier is claimed. Saved/reused device-context failures were reproduced
+and fixed before old display buffers were freed.
+
+The same final executable completed compressed-save reload from turn 3 to turn 8,
+a culture-enabled Persian small-map game through turn 4, and a 57-frame native
+window recording. Targeted framebuffer memory/undefined-behavior/thread sanitizer
+checks passed. Full scope, exact measurements, limitations and retained evidence:
+[performance and framebuffer stability](macos-performance.md).
+
 ## Environment and reproducibility
 
 - Host observed: macOS 27.2 (26B123), Apple Silicon `arm64`, 16 GB RAM.

@@ -12,9 +12,20 @@
 #include "game_lock.h"
 #include "host_options.h"
 #include "script_options.h"
+#include "menu_pacing.h"
 static int failures;
 #define CHECK(name, condition) do { if (!(condition)) { fprintf(stderr, "FAIL: %s\n", name); ++failures; } } while (0)
 int main(void) {
+    for (int main_thread=0; main_thread<2; ++main_thread)
+    for (int menu=0; menu<2; ++menu) for (int result=0; result<2; ++result)
+    for (unsigned low=0; low<2; ++low) for (unsigned high=0; high<2; ++high)
+    for (unsigned flags=0; flags<4; ++flags) {
+        unsigned expected=main_thread && menu && !result && !low && !high && !(flags&2u) ? 2u:0u;
+        CHECK("menu pacing only applies to empty unfiltered UI polls",
+              civ3_menu_pause_ms(2,main_thread,menu,result,low,high,flags)==expected);
+    }
+    CHECK("menu pacing can be disabled",civ3_menu_pause_ms(0,1,1,0,0,0,0)==0);
+    CHECK("menu pacing is bounded",civ3_menu_pause_ms(17,1,1,0,0,0,0)==0);
     uint32_t value = 99;
     const char *bad[] = {"", "0", "-1", "+1", "1x", " 5", "5 ", "NaN", "1e2", "241", "99999999999999999999999999999"};
     for (unsigned i = 0; i < sizeof bad / sizeof *bad; ++i) CHECK(bad[i], !civ3_unsigned_option(bad[i], 1, 240, &value));

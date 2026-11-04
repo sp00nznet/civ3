@@ -27,6 +27,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <sys/mman.h>
 #include <execinfo.h>
 
@@ -36,6 +37,9 @@
 #include "record_pipe.h"
 #include "host_options.h"
 #include "game_lock.h"
+#include "menu_pacing.h"
+#include "framebuffer.h"
+#include "machine_snapshot.h"
 
 #define CIV3_IMAGE_BASE 0x00400000u
 #define CIV3_GUEST_EXE  "C:\\Conquests\\Civ3Conquests.exe"
@@ -48,32 +52,66 @@ void script_set_window(uint32_t hwnd);
 
 int g_headless;
 static unsigned g_watchdog_s, g_play_s;
-volatile int g_menu_open;
+#ifdef __APPLE__
+static unsigned g_menu_idle_ms = 2;
+#else
+static unsigned g_menu_idle_ms;
+#endif
+static pthread_t g_ui_thread;
+_Atomic int g_menu_open;
 
 /* ---- the screen: what jgl's window DCs draw into ------------------------- */
 
-static uint32_t *g_screen;
-static int g_screen_w, g_screen_h;
-static void screen_mode(int w, int h) {
-    if (w == g_screen_w && h == g_screen_h) return;
-    uint32_t *px = (uint32_t *)calloc((size_t)w * h, 4);
-    hle_gdi_window_surface((uint8_t *)px, w, h, w * 4, 32);
-    hle_set_screen_size(w, h);
-    g_screen = px, g_screen_w = w, g_screen_h = h;   /* ponytail: the old one leaks; modes change once or twice a run */
-    fprintf(stderr, "[screen] %dx%d\n", w, h);
+static civ3_surface g_surface;
+static void bind_surface(const civ3_surface *surface, void *unused) {
+    (void)unused;
+    hle_gdi_window_surface((uint8_t *)surface->pixels, surface->width, surface->height, surface->width*4, 32);
+    hle_set_screen_size(surface->width, surface->height);
+}
+static int screen_mode(int w, int h) {
+    mach_enter();
+    int changed = w != g_surface.width || h != g_surface.height;
+    int status = civ3_surface_resize(&g_surface,w,h,bind_surface,NULL);
+    mach_leave();
+    if(status) fprintf(stderr,"[screen] rejected %dx%d: %s\n",w,h,strerror(errno));
+    else if(changed) fprintf(stderr,"[screen] %dx%d\n",w,h);
+    return status;
+}
+/* A timeout must still terminate a wedged guest. Native Mac snapshots use a
+ * nonblocking machine-lock API instead of joining an unbounded waiter queue. */
+static int snapshot_lock(unsigned milliseconds) {
+#ifdef __APPLE__
+    uint32_t start=hle_ticks_ms();
+    do {
+        if(mach_try_enter()) return 1;
+        usleep(1000);
+    } while(hle_ticks_ms()-start < milliseconds);
+    return 0;
+#else
+    (void)milliseconds;
+    mach_enter();
+    return 1;
+#endif
 }
 
 /* Per mille of sampled pixels changed since the last snapshot (--open). */
 int screen_changed(int snapshot) {
     static uint32_t snap[4096];
-    if (!g_screen) return -1;
-    int changed = 0;
-    for (int i = 0; i < 4096; i++) {
-        uint32_t v = g_screen[(size_t)(i * 7919u) % ((size_t)g_screen_w * g_screen_h)];
-        if (snapshot) snap[i] = v;
-        else changed += snap[i] != v;
+    static int old_w, old_h;
+    mach_enter();
+    if(!g_surface.pixels) { mach_leave(); return -1; }
+    int changed=0;
+    if(!snapshot && (old_w!=g_surface.width || old_h!=g_surface.height)) {
+        mach_leave(); return 1000;
     }
-    return changed * 1000 / 4096;
+    size_t count=(size_t)g_surface.width*g_surface.height;
+    for(int i=0;i<4096;i++) {
+        uint32_t v=g_surface.pixels[(size_t)(i*7919u)%count];
+        if(snapshot) snap[i]=v; else changed+=snap[i]!=v;
+    }
+    if(snapshot) {old_w=g_surface.width;old_h=g_surface.height;}
+    mach_leave();
+    return changed*1000/4096;
 }
 
 /* jgl looks the mode it wants (1024x768 at 16 bpp) up in this list, then
@@ -90,7 +128,7 @@ static void c_EnumDisplaySettingsA(void) {             /* (device, mode, DEVMODE
     int32_t n = (int32_t)A32(1);
     uint32_t dm = A32(2);
     int count = (int)(sizeof k_modes / sizeof *k_modes);
-    if (n < 0) { put_mode(dm, g_screen_w, g_screen_h, 32); RET(1, 3); }   /* ENUM_CURRENT/REGISTRY_SETTINGS */
+    if (n < 0) { put_mode(dm, g_surface.width, g_surface.height, 32); RET(1, 3); }   /* ENUM_CURRENT/REGISTRY_SETTINGS */
     if (n >= 2 * count) RET(0, 3);
     put_mode(dm, k_modes[n / 2][0], k_modes[n / 2][1], n & 1 ? 32 : 16);
     RET(1, 3);
@@ -99,7 +137,7 @@ static void c_ChangeDisplaySettingsA(void) {           /* (DEVMODEA*, flags) */
     uint32_t dm = A32(0);
     if (dm) {
         fprintf(stderr, "[screen] ChangeDisplaySettingsA %ux%u %u bpp\n", MEM32(dm + 108), MEM32(dm + 112), MEM32(dm + 104));
-        screen_mode((int)MEM32(dm + 108), (int)MEM32(dm + 112));
+        if (screen_mode((int)MEM32(dm + 108), (int)MEM32(dm + 112))) RET(0xFFFFFFFEu, 2); /* DISP_CHANGE_BADMODE */
     }
     RET(0, 2);                                         /* DISP_CHANGE_SUCCESSFUL */
 }
@@ -120,6 +158,20 @@ static recomp_func_t hle_fn(const win32hle_shim *t, const char *name) {
     return NULL;
 }
 static recomp_func_t g_hle_LoadLibraryA, g_hle_GetProcAddress, g_hle_CreateWindowExA;
+static recomp_func_t g_hle_PeekMessageA;
+static void c_PeekMessageA(void) {
+    uint32_t low = A32(2), high = A32(3), flags = A32(4);
+    g_hle_PeekMessageA(); /* The shim consumes arguments and returns its real result. */
+    unsigned delay = civ3_menu_pause_ms(g_menu_idle_ms, pthread_equal(pthread_self(), g_ui_thread),
+                                       MEM8(MENU_FLAG_VA) != 0, g_eax, low, high, flags);
+    if (delay) {
+        /* Release the guest machine so audio/timers and input can continue. */
+        hle_block_begin();
+        usleep(delay * 1000u);
+        hle_block_end();
+    }
+}
+
 
 static int lifted_dll(const char *name) {
     const char *b = strrchr(name, '\\');
@@ -215,6 +267,7 @@ static void c_MessageBoxA(void) {
 static const win32hle_shim g_civ3_shims[] = {
     { "LoadLibraryA", c_LoadLibraryA }, { "GetProcAddress", c_GetProcAddress }, { "FreeLibrary", c_FreeLibrary },
     { "CreateWindowExA", c_CreateWindowExA }, { "MessageBoxA", c_MessageBoxA },
+    { "PeekMessageA", c_PeekMessageA },
     { "EnumDisplaySettingsA", c_EnumDisplaySettingsA }, { "ChangeDisplaySettingsA", c_ChangeDisplaySettingsA },
     { "UnregisterClassA", c_UnregisterClassA },
     { "SteamAPI_Init", c_cdecl0 }, { "SteamAPI_RestartAppIfNecessary", c_cdecl0 }, { "SteamAPI_Shutdown", c_cdecl0 },
@@ -273,16 +326,14 @@ static void on_fault(int sig, siginfo_t *si, void *uc) {
 
 /* --shot FILE: the screen as a PPM when the watchdog ends the run. */
 static char g_shot[PATH_MAX];
-static void shot(void) {
-    FILE *f = g_shot[0] && g_screen ? fopen(g_shot, "wb") : NULL;
-    if (!f) return;
-    fprintf(f, "P6\n%d %d\n255\n", g_screen_w, g_screen_h);
-    for (size_t i = 0, n = (size_t)g_screen_w * g_screen_h; i < n; i++) {
-        uint8_t rgb[3] = { (uint8_t)(g_screen[i] >> 16), (uint8_t)(g_screen[i] >> 8), (uint8_t)g_screen[i] };
-        fwrite(rgb, 1, 3, f);
+static int shot(const civ3_surface *copy) {
+    if(!g_shot[0]) return 0;
+    if(!copy->pixels || civ3_surface_write_ppm(copy,g_shot)) {
+        fprintf(stderr,"[shot] FAILED: %s\n",copy->pixels?strerror(errno):"guest stayed busy; no safe snapshot");
+        return 1;
     }
-    fclose(f);
-    fprintf(stderr, "[shot] %s\n", g_shot);
+    fprintf(stderr,"[shot] %s\n",g_shot);
+    return 0;
 }
 
 /* --watchdog S from the start; --play S from the main menu (as on Windows). */
@@ -295,23 +346,42 @@ static void *watchdog(void *unused) {
         else fprintf(stderr, "\n[watchdog] no main menu after %u s\n", g_watchdog_s);
     }
     if (!g_play_s || g_menu_open) sleep(g_watchdog_s);
-    fprintf(stderr, "\n[watchdog] %u s: in sub_%08X, last import %s, %u indirect calls\n",
-            g_watchdog_s, g_cur_func, g_cur_import ? g_cur_import : "(none)", g_icall_count);
-    fprintf(stderr, "[game] turn %u\n", MEM32(TURN_VA));
-    shot();
-    hle_exit(4);
+    civ3_surface copy={0};
+    if(snapshot_lock(250)) {
+        /* Entering a snapshot context changes the current register owner;
+         * don't misreport this monitor's g_cur_func as the guest's PC. */
+        fprintf(stderr, "\n[watchdog] %u s: safe snapshot, last import %s, %u indirect calls\n",
+                g_watchdog_s, g_cur_import ? g_cur_import : "(none)", g_icall_count);
+        fprintf(stderr, "[game] turn %u\n", MEM32(TURN_VA));
+        if(g_shot[0] && civ3_surface_snapshot(&g_surface,&copy))
+            fprintf(stderr,"[shot] snapshot allocation failed: %s\n",strerror(errno));
+        mach_leave();
+    } else fprintf(stderr,"[watchdog] guest stayed busy; exiting without an unsafe state read\n");
+    int failed=shot(&copy);
+    civ3_surface_dispose(&copy);
+    hle_exit(failed?5:4);
     return NULL;
 }
 
 /* The harness's milestones, from game state (input.c on Windows). */
 static void *milestones(void *unused) {
     (void)unused;
-    while (!MEM8(MENU_FLAG_VA)) usleep(100000);
-    g_menu_open = 1;
-    fprintf(stderr, "[game] main menu open\n");
-    while (MEM8(MENU_FLAG_VA)) usleep(100000);
-    fprintf(stderr, "[game] main menu closed: a menu choice was taken\n");
-    return NULL;
+    int opened=0;
+    for(;;) {
+        if(snapshot_lock(20)) {
+            int active=MEM8(MENU_FLAG_VA)!=0;
+            mach_leave();
+            if(!opened && active) {
+                opened=1;
+                atomic_store(&g_menu_open,1);
+                fprintf(stderr,"[game] main menu open\n");
+            } else if(opened && !active) {
+                fprintf(stderr,"[game] main menu closed: a menu choice was taken\n");
+                return NULL;
+            }
+        }
+        usleep(50000);
+    }
 }
 
 /* ---- --record: the screen to ffmpeg, as on Windows ----------------------- */
@@ -344,7 +414,7 @@ static void *recorder(void *unused) {
     (void)unused;
     while (!g_menu_open) usleep(50000);
     mach_enter();
-    int w = g_screen_w, h = g_screen_h;
+    int w = g_surface.width, h = g_surface.height;
     mach_leave();
     size_t size = (size_t)w * h * 4;
     uint32_t *frame = (uint32_t *)calloc(1, size);
@@ -364,8 +434,8 @@ static void *recorder(void *unused) {
         /* Copy while the guest is paused, but never hold the machine lock
          * while waiting for FFmpeg or its pipe. Lock ordering stays acyclic. */
         mach_enter();
-        int same_size = g_screen && g_screen_w == w && g_screen_h == h;
-        if (same_size) memcpy(frame, g_screen, size);
+        int same_size = g_surface.pixels && g_surface.width == w && g_surface.height == h;
+        if (same_size) memcpy(frame, g_surface.pixels, size);
         mach_leave();
         pthread_mutex_lock(&g_rec_lock);
         if (g_record_stopping) { pthread_mutex_unlock(&g_rec_lock); break; }
@@ -423,6 +493,7 @@ int main(int argc, char **argv) {
     const char *exe = "work/Civ3Conquests.exe", *game = "game", *work = "work";
     int run = 0;
     setvbuf(stderr, NULL, _IONBF, 0);
+    g_ui_thread = pthread_self();
     for (int i = 1; i < argc; i++) {
         int n = script_arg(argc, argv, i);
         if (n < 0) return 1;
@@ -435,6 +506,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--work") && i + 1 < argc) work = argv[++i];
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc) g_watchdog_s = number_option("--watchdog", argv[++i], 1, 86400);
         else if (!strcmp(argv[i], "--play") && i + 1 < argc) g_play_s = number_option("--play", argv[++i], 1, 86400);
+        else if (!strcmp(argv[i], "--menu-idle-ms") && i + 1 < argc) g_menu_idle_ms = number_option("--menu-idle-ms", argv[++i], 0, 16);
         else if (!strcmp(argv[i], "--trace")) win32hle_trace = 1;
         else if (!strcmp(argv[i], "--nosteam")) ;           /* the Windows host's: Steam is always absent here */
         else if (!strcmp(argv[i], "--record") && i + 1 < argc)
@@ -445,7 +517,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--fps") && i + 1 < argc) g_fps = number_option("--fps", argv[++i], 1, 240);
         else if (!strcmp(argv[i], "--overwrite-recording")) g_record_overwrite = 1;
         else {
-            printf("usage: civ3 [--run] [--headless] [--mute] [--record out.mp4] [--overwrite-recording] [--frames N] [--fps 1..240]\n"
+            printf("usage: civ3 [--run] [--headless] [--mute] [--menu-idle-ms 0..16] [--record out.mp4] [--overwrite-recording] [--frames N] [--fps 1..240]\n"
                    "            [--move x,y@s] [--click x,y@s] [--open x,y@s] [--key [c][s][a]+vk@s] [--wait VA@s] [--autopilot MS@s]\n"
                    "            [--exe work/Civ3Conquests.exe] [--game game] [--work work] [--watchdog S] [--play S] [--shot out.ppm] [--trace]\n");
             return !strcmp(argv[i], "--help") || !strcmp(argv[i], "-h") ? 0 : 1;
@@ -506,6 +578,7 @@ int main(int argc, char **argv) {
     g_hle_LoadLibraryA = hle_fn(win32hle_module, "LoadLibraryA");
     g_hle_GetProcAddress = hle_fn(win32hle_module, "GetProcAddress");
     g_hle_CreateWindowExA = hle_fn(win32hle_user32, "CreateWindowExA");
+    g_hle_PeekMessageA = hle_fn(win32hle_user32, "PeekMessageA");
     win32hle_register(g_civ3_shims);   /* first: the game's own answers win */
     recomp_host_init();
     printf("Civilization III: Conquests recomp host (native POSIX)\n  lifted functions in dispatch: %u\n",
@@ -528,7 +601,7 @@ int main(int argc, char **argv) {
     snprintf(conquests, sizeof conquests, "%s/Conquests", game_full);
     if (chdir(conquests) != 0) { fprintf(stderr, "cannot enter %s\n", conquests); return 1; }
 
-    screen_mode(1024, 768);
+    if (screen_mode(1024, 768)) return 1;
     hle_screen_cursor_hook = hle_cursor_shown;          /* the system cursors, unless the game hides them */
     if (hle_screen_open("Civilization III: Conquests", 0, g_headless) != 0) return 1;
     hle_on_exit = on_exit_close;

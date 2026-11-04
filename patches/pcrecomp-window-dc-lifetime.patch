@@ -1,0 +1,35 @@
+--- gdidc.c
++++ gdidc.c
+@@ -54,6 +54,7 @@
+     for (int i = 0; i < MAX_DC; i++)
+         if (!g_dc[i].used) {
+             memset(&g_dc[i], 0, sizeof g_dc[i]);
++            memset(&g_saved[i], 0, sizeof g_saved[i]);
+             g_dc[i].used = 1, g_dc[i].font = SYSTEM_FONT, g_dc[i].bk = 0xFFFFFFu, g_dc[i].bkmode = OPAQUE;
+             return DC_BASE + (uint32_t)i;
+         }
+@@ -65,7 +66,7 @@
+     if (x) x->px = px, x->w = w, x->h = h, x->pitch = pitch, x->bpp = bpp;
+     return d;
+ }
+-void hle_gdi_release_dc(uint32_t h) { dc_t *x = DC(h); if (x) x->used = 0; }
++void hle_gdi_release_dc(uint32_t h) { dc_t *x = DC(h); if (x) { g_saved[x-g_dc].used = 0; x->used = 0; } }
+ 
+ /* The window surface: the pixels a GDI game's window DCs (GetDC, BeginPaint)
+  * draw into, set by the host at the display mode's size. There is one, for
+@@ -79,8 +80,13 @@
+     g_win_seq++;
+     /* A window DC the game keeps (Civilization III's jgl holds its own)
+      * follows a mode change: it had been drawing into the old pixels. */
+-    for (int i = 0; i < MAX_DC; i++)
+-        if (g_dc[i].used && g_dc[i].win) g_dc[i].px = px, g_dc[i].w = w, g_dc[i].h = h, g_dc[i].pitch = pitch, g_dc[i].bpp = bpp;
++    for (int i = 0; i < MAX_DC; i++) {
++        dc_t *states[2] = { &g_dc[i], &g_saved[i] };
++        for (int j = 0; j < 2; j++) {
++            dc_t *d = states[j];
++            if (d->used && d->win) d->px = px, d->w = w, d->h = h, d->pitch = pitch, d->bpp = bpp;
++        }
++    }
+ }
+ uint32_t hle_gdi_window_dc(void) {
+     uint32_t d = new_dc();

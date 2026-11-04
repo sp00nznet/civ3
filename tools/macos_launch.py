@@ -107,7 +107,8 @@ def main(argv: list[str] | None = None) -> int:
               'Builds and launches the native Mac game. Existing sessions are never terminated.\n'
               '--logs records output in a new timestamped work/macos-game-*.log.\n'
               '--verify runs the menu smoke test (accepts --timeout SECONDS).\n'
-              'Recording: --record FILE [--fps 1..240] [--frames N] [--overwrite-recording]')
+              'Recording: --record FILE [--fps 1..240] [--frames N] [--overwrite-recording]\n'
+              'Menu CPU pacing: --menu-idle-ms 0..16 (default 2; 0 disables; gameplay is not delayed)')
         return 0
     mode = arguments.pop(0) if arguments and arguments[0] in MODES else 'run'
     root = ROOT.resolve()

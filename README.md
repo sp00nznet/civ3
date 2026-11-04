@@ -1,5 +1,10 @@
 # Civilization III: Conquests — Static Recompilation
 
+> **Performance and stability:** idle-menu CPU fell by 85% in a native-window
+> A/B check (89% across repeated headless runs), with identical menu pixels.
+> Graphics-copy paths and framebuffer lifetime are improved; see the
+> [measurements, scope and regression evidence](docs/macos-performance.md).
+
 > **Reliability update:** safer relaunching, protected video recordings and
 > validated save/reload are documented in [macOS reliability](docs/macos-reliability.md).
 

@@ -17,6 +17,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <time.h>
 #include "script_options.h"
 #include "win32hle.h"
@@ -33,7 +34,7 @@
 #define VK_MENU    0x12u
 #define VK_SPACE   0x20u
 
-extern volatile int g_menu_open;          /* main.c */
+extern _Atomic int g_menu_open;          /* main.c */
 int screen_changed(int snapshot);
 
 #define MAX_EV 256
@@ -67,6 +68,12 @@ static void msleep(uint32_t ms) {
 
 static void post(uint32_t m, uint32_t w, uint32_t l) { mach_enter(); hle_post_message(g_hwnd, m, w, l); mach_leave(); }
 static void key_state(uint32_t vk, int down) { mach_enter(); hle_input_key_state(vk, down); mach_leave(); }
+static uint32_t read_guest_word(uint32_t address) {
+    mach_enter();
+    uint32_t value = MEM32(address);
+    mach_leave();
+    return value;
+}
 
 /* Until the game has read the left button twice more, up to 1 s. */
 static void lb_seen(void) {
@@ -116,9 +123,10 @@ static void *script(void *unused) {
         if (wait > 0) msleep((uint32_t)wait);
         if (e->kind == 'w') {
             uint32_t w0 = hle_ticks_ms();
-            while (!MEM32(e->x) && hle_ticks_ms() - w0 < 300000) msleep(100);
+            uint32_t value = read_guest_word((uint32_t)e->x);
+            while (!value && hle_ticks_ms() - w0 < 300000) { msleep(100); value = read_guest_word((uint32_t)e->x); }
             shift += (int32_t)(hle_ticks_ms() - w0);
-            fprintf(stderr, "[input] %.1fs waited %.1fs for [0x%X] = %u\n", e->t, (hle_ticks_ms() - w0) / 1000.0, e->x, MEM32(e->x));
+            fprintf(stderr, "[input] %.1fs waited %.1fs for [0x%X] = %u\n", e->t, (hle_ticks_ms() - w0) / 1000.0, e->x, value);
             continue;
         }
         if (e->kind == 'a') {
