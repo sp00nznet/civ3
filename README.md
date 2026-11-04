@@ -1,7 +1,7 @@
 # Civilization III: Conquests — Static Recompilation
 
 > **macOS fork:** native 64-bit Apple Silicon build verified through windowed
-> gameplay on `macos-native`; Intel support is untested. See [macOS setup](docs/macos.md)
+> gameplay on `macos-native-verified`; Intel support is untested. See [macOS setup](docs/macos.md)
 > and [verified test status](docs/macos-validation.md). The upstream
 > Windows/Linux status below does not establish macOS compatibility. Keep
 > **Culturally Linked Start Locations off** (the setup default; known workaround).

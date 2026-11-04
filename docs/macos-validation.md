@@ -31,7 +31,7 @@ Local verification on **November 3, 2026**, not a claim of complete game compati
 | Headless gameplay, sound disabled | Quick Start, founded Rome, progressed to turn 4 / 3800 BC; screenshot visually inspected |
 | Headless gameplay, audio enabled, INI fix applied | Quick Start and turn 2; expected watchdog exit 4 |
 | Native window | Cocoa window registered on screen, 1280-pixel width; direct window screenshot blocked by the Mac's capture permissions |
-| Windowed gameplay, audio enabled, culture-linked starts disabled | Completed Quick Start, founded Rome, and reached turn 3; framebuffer saved; expected watchdog termination |
+| Windowed gameplay, audio enabled, culture-linked starts disabled | Completed Quick Start, founded Rome, and reached turn 3 / 3850 BC; framebuffer visually inspected; expected watchdog termination |
 
 The main menu milestone alone does not prove gameplay. A valid nonuniform
 framebuffer is required by the smoke checker. The explicit turn counts above
