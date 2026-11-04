@@ -1,5 +1,8 @@
 # Civilization III: Conquests — Static Recompilation
 
+> **Pixel safety update:** packed-color/24-bit rendering, palette bounds and
+> clipped stretch repairs are tested on `main`; see [pixel safety](docs/macos-pixel-safety.md).
+
 > **Consolidated on `main`:** all fork branches are integrated. The tested macOS
 > implementation is authoritative; earlier branch history is preserved.
 

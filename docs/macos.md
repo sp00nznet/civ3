@@ -6,8 +6,9 @@ separate guest-memory mapping; they are not truncated native Mac pointers.
 No Wine, Windows VM, Rosetta, or JIT is used by this path.
 
 **Status: experimental.** Native runtime and setup tests pass on Apple Silicon; the main menu and an initial multi-turn game have rendered successfully.
-Full-game validation is tracked in `macos-validation.md`. Intel compilation,
-multiplayer, long campaigns, and distribution/signing are not yet verified.
+Full-game validation is tracked in `macos-validation.md`. Source-only host/runtime
+checks have passed on Apple Silicon and Intel CI runners. Commercial gameplay
+on Intel, multiplayer, long campaigns, and distribution/signing remain unverified.
 The upstream Windows/Linux compatibility table is not a macOS test result.
 
 **Culture-linked starts:** the Mac build now includes an experimental repair
@@ -75,6 +76,10 @@ Common true-color graphics copies now use a checked fast path. Display changes
 refresh active/saved window contexts before freeing old buffers; screenshot
 snapshots are synchronized, and output failures are reported. See
 [performance methods and stability checks](macos-performance.md).
+
+Packed-color and 24-bit DC rendering now uses exact-width pixel accesses,
+bounded palette updates and clipped scalar work. See [pixel safety tests and
+remaining graphics limitations](macos-pixel-safety.md).
 
 ## Build and debugging
 

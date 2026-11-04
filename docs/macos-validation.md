@@ -194,3 +194,15 @@ The subsequent bitmap repair passed **78 Python tests and 16 native tests**
 locally. The actual game saved/reloaded from turn 3 through turn 9 / 3550 BC,
 and a culture-enabled Persian game reached turn 4. See
 [bitmap scope, evidence and sanitizer limitation](macos-bitmap-safety.md).
+
+
+## Packed pixels and bounded scalar rendering follow-up
+
+On `main`, the 24-bit guard-page read crash and packed-format read/write failures
+were reproduced and repaired. The local suite passes **78 Python tests and
+18 native tests**, including 311,492 pixel-helper assertions and 1,500 independent
+scaling comparisons. Focused ASan/UBSan checks passed for the dependency-free
+helper only. Save/reload progressed from turn 3 to turn 8; a culture-linked
+Persian game reached turn 4, and both game framebuffers were visually inspected.
+The native-window menu remained byte-identical to the preceding build.
+See [exact build, tests and limitations](macos-pixel-safety.md).

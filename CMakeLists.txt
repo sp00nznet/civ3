@@ -91,6 +91,14 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-bitmap-objects.patch")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/gdidc.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-pixel-formats.patch"
+                        RESULT_VARIABLE PIXEL_FORMAT_RESULT)
+        if(NOT PIXEL_FORMAT_RESULT EQUAL 0)
+          message(FATAL_ERROR "Pixel format repair failed; use the pinned runtime")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-pixel-formats.patch")
       endif()
       # Reapplying a patch must not rebuild/relink the game on every launch.
       execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different

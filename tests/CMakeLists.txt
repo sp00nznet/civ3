@@ -32,3 +32,13 @@ target_include_directories(civ3_bitmap_test PRIVATE ../src/linux)
 target_link_libraries(civ3_bitmap_test PRIVATE civ3_fixture_hle)
 add_test(NAME macos_bitmap_safety COMMAND civ3_bitmap_test)
 set_tests_properties(macos_bitmap_safety PROPERTIES TIMEOUT 30)
+
+add_executable(civ3_pixel_formats_test pixel_formats_selftest.c)
+target_link_libraries(civ3_pixel_formats_test PRIVATE civ3_fixture_hle)
+add_test(NAME macos_pixel_formats COMMAND civ3_pixel_formats_test)
+set_tests_properties(macos_pixel_formats PROPERTIES TIMEOUT 10)
+
+add_executable(civ3_pixel_io_test pixel_io_selftest.c)
+target_include_directories(civ3_pixel_io_test PRIVATE ../src/linux)
+add_test(NAME macos_pixel_io_bounds COMMAND civ3_pixel_io_test)
+set_tests_properties(macos_pixel_io_bounds PROPERTIES TIMEOUT 10)
