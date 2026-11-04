@@ -1,0 +1,92 @@
+--- gdidc.c
++++ gdidc.c
+@@ -22,6 +22,7 @@
+ #include <SDL2/SDL.h>
+ #include <SDL2/SDL_ttf.h>
+ #include "win32hle.h"
++#include "bitmap_layout.h"
+ 
+ #define TRANSPARENT 1
+ #define OPAQUE      2
+@@ -463,22 +464,32 @@
+ /* make a selectable bitmap object with its own pixels (CreateCompatibleBitmap
+  * / CreateBitmap). gdi32.c's CreateDIBSection registers its DIB this way too. */
+ uint32_t hle_gdi_make_bitmap(int w, int h, int bpp, uint8_t *px, int owns) {
++    int height, pitch; uint32_t bytes;
++    if (!px || h <= 0 || !civ3_bitmap_layout(w, h, (uint32_t)bpp, &height, &pitch, &bytes)) {
++        if (owns) free(px);
++        hle_set_last_error(87); return 0;
++    }
+     uint32_t handle = new_obj(GO_BITMAP); gobj_t *o = GOBJ(handle);
+-    if (o) { o->w = w, o->h = h, o->bpp = bpp, o->pitch = w * (bpp / 8); o->px = px; o->owns = owns; }
++    if (!o) { if (owns) free(px); hle_set_last_error(8); return 0; }
++    o->w = w; o->h = h; o->bpp = bpp; o->pitch = w * (bpp / 8); o->px = px; o->owns = owns;
+     return handle;
+ }
+-/* A DIB section's bitmap object: rows DWORD-aligned, a bottom-up one with
+- * its last row first and a negative pitch, so a DC reads it top-down. */
++/* Owns only its palette. The caller retains/frees bits on failure. */
+ uint32_t hle_gdi_make_dib(int w, int h, int bpp, uint8_t *bits, int topdown, const uint32_t *ctab, int ncolors, int is555) {
++    int height, pitch; uint32_t bytes;
++    if (!bits || h <= 0 || !civ3_bitmap_layout(w, h, (uint32_t)bpp, &height, &pitch, &bytes) ||
++        ncolors < 0 || (bpp <= 8 && (unsigned)ncolors > (1u << bpp))) {
++        hle_set_last_error(87); return 0;
++    }
++    uint32_t *palette = bpp <= 8 ? (uint32_t *)calloc(256, sizeof *palette) : NULL;
++    if (bpp <= 8 && !palette) { hle_set_last_error(8); return 0; }
+     uint32_t handle = new_obj(GO_BITMAP); gobj_t *o = GOBJ(handle);
+-    if (!o) return 0;
+-    int pitch = (w * bpp + 31) / 32 * 4;
+-    o->w = w, o->h = h, o->bpp = bpp, o->is555 = bpp == 16 && is555;
+-    o->px = topdown ? bits : bits + (size_t)(h - 1) * pitch, o->pitch = topdown ? pitch : -pitch;
+-    if (bpp <= 8) {
+-        o->pal = (uint32_t *)calloc(256, 4), o->paln = 256;
+-        if (ctab) memcpy(o->pal, ctab, (size_t)(ncolors > 256 ? 256 : ncolors) * 4);
+-    }
++    if (!o) { free(palette); hle_set_last_error(8); return 0; }
++    o->w = w; o->h = h; o->bpp = bpp; o->is555 = bpp == 16 && is555;
++    o->px = topdown ? bits : bits + (size_t)(h - 1) * (size_t)pitch;
++    o->pitch = topdown ? pitch : -pitch;
++    o->pal = palette; o->paln = bpp <= 8 ? 256 : 0;
++    if (palette && ctab && ncolors) memcpy(palette, ctab, (size_t)ncolors * sizeof *palette);
+     return handle;
+ }
+ /* GetObjectA(h, size, buf): what an object is, in the caller's buffer.
+@@ -553,13 +564,30 @@
+     for (uint32_t i = 0; i < n; i++) g->pal[start + i] = MEM32(q + 4 * i) & 0xFFFFFFu;
+     RET(n, 4);
+ }
+-static void g_CreateCompatibleBitmap(void) {             /* (hdc, w, h) -> 32bpp bitmap */
+-    int w = (int)A32(1), h = (int)A32(2); if (w < 1) w = 1; if (h < 1) h = 1;
+-    RET(hle_gdi_make_bitmap(w, h, 32, (uint8_t *)calloc((size_t)w * h, 4), 1), 3);
+-}
+-static void g_CreateBitmap(void) {                       /* (w, h, planes, bpp, bits) */
+-    int w = (int)A32(0), h = (int)A32(1), bpp = (int)A32(3); if (bpp < 8) bpp = 8;
+-    RET(hle_gdi_make_bitmap(w, h, bpp == 24 ? 32 : bpp, (uint8_t *)calloc((size_t)w * h, bpp / 8 ? bpp / 8 : 1), 1), 5);
++static uint32_t make_owned_bitmap(int w, int h, uint32_t bits) {
++    int height, pitch; uint32_t bytes;
++    /* Preserve the shim's existing internal format normalization. In
++     * particular a 24-bit request uses 32-bit storage, not a 3-byte buffer
++     * later written through 4-byte pixels. Initial lpBits semantics are
++     * unchanged by this allocation-safety repair. */
++    if (!(bits == 1 || bits == 4 || bits == 8 || bits == 16 || bits == 24 || bits == 32) || w < 0 || h < 0) {
++        hle_set_last_error(87); return 0;
++    }
++    if (!w || !h) w = h = 1;
++    uint32_t stored_bits = bits == 24 ? 32 : bits < 8 ? 8 : bits;
++    if (!civ3_bitmap_layout(w, h, stored_bits, &height, &pitch, &bytes)) {
++        hle_set_last_error(87); return 0;
++    }
++    uint8_t *pixels = (uint8_t *)calloc(1, bytes);
++    if (!pixels) { hle_set_last_error(8); return 0; }
++    return hle_gdi_make_bitmap(w, h, (int)stored_bits, pixels, 1);
++}
++static void g_CreateCompatibleBitmap(void) {
++    RET(make_owned_bitmap((int)A32(1), (int)A32(2), 32), 3);
++}
++static void g_CreateBitmap(void) {
++    if (A32(2) != 1) { hle_set_last_error(87); RET(0, 5); }
++    RET(make_owned_bitmap((int)A32(0), (int)A32(1), A32(3)), 5);
+ }
+ 
+ /* ---- DCs ---- */

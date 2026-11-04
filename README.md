@@ -3,6 +3,9 @@
 > **Consolidated on `main`:** all fork branches are integrated. The tested macOS
 > implementation is authoritative; earlier branch history is preserved.
 
+> **Latest safety update:** [bounded bitmap allocation and cleanup](docs/macos-bitmap-safety.md),
+> with 78 Python and 16 native tests passing locally.
+
 > **Performance and stability:** idle-menu CPU fell by 85% in a native-window
 > A/B check (89% across repeated headless runs), with identical menu pixels.
 > Graphics-copy paths and framebuffer lifetime are improved; see the

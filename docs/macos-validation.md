@@ -181,3 +181,16 @@ The final repaired executable also completed a windowed culture-linked Persian
 game to turn 4 / 3800 BC with audio enabled. CoreGraphics reported the native
 Cocoa window, and the final game framebuffer was visually inspected. Evidence:
 `work/macos-culture-window/`.
+
+
+## Main consolidation and bitmap allocation follow-up
+
+All existing fork branches are merged into `main` with their history preserved.
+The merge's source-only GitHub checks passed on both `macos-15` (Apple Silicon)
+and `macos-15-intel`; this verifies runtime/host fixtures, not commercial gameplay
+on Intel. The distinct early-branch host tests are now included in the suite.
+
+The subsequent bitmap repair passed **78 Python tests and 16 native tests**
+locally. The actual game saved/reloaded from turn 3 through turn 9 / 3550 BC,
+and a culture-enabled Persian game reached turn 4. See
+[bitmap scope, evidence and sanitizer limitation](macos-bitmap-safety.md).

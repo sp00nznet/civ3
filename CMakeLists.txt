@@ -51,7 +51,8 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
                                 "kernel32_ext.c|pcrecomp-profile-updates.patch"
                                 "screen.c|pcrecomp-screen-thread.patch"
                                 "gdidc.c|pcrecomp-gdi-performance.patch"
-                                "host_lite.c|pcrecomp-machine-snapshot.patch")
+                                "host_lite.c|pcrecomp-machine-snapshot.patch"
+                                "gdi32.c|pcrecomp-bitmap-allocation.patch")
       string(REPLACE "|" ";" PATCH_FIELDS "${PATCH_SPEC}")
       list(GET PATCH_FIELDS 0 PATCH_SOURCE)
       list(GET PATCH_FIELDS 1 PATCH_FILE)
@@ -80,6 +81,16 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-file-sharing.patch")
+      endif()
+      if(PATCH_SOURCE STREQUAL "gdidc.c")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/gdidc.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-bitmap-objects.patch"
+                        RESULT_VARIABLE BITMAP_OBJECT_RESULT)
+        if(NOT BITMAP_OBJECT_RESULT EQUAL 0)
+          message(FATAL_ERROR "Bitmap object safety patch failed; use the pinned runtime")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-bitmap-objects.patch")
       endif()
       # Reapplying a patch must not rebuild/relink the game on every launch.
       execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -120,6 +131,8 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
                  "${CMAKE_SOURCE_DIR}/patches/pcrecomp-window-dc-lifetime.patch")
   endif()
   if(APPLE)
+    set_source_files_properties("${MACOS_HLE_DIR}/gdidc.c" "${MACOS_HLE_DIR}/gdi32.c"
+                                PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/src/linux")
     # Optimize only the profiled pixel-transfer layer; the lifted game and
     # thread scheduler retain their previously tested compiler settings.
     set_source_files_properties("${MACOS_HLE_DIR}/gdidc.c" PROPERTIES COMPILE_OPTIONS "-O2;-fno-strict-aliasing;-fwrapv")

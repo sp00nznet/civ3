@@ -2,6 +2,7 @@
 # All fixtures below are synthetic; no commercial executable or game assets.
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 add_library(civ3_fixture_hle STATIC ${HLE_SOURCES})
+target_include_directories(civ3_fixture_hle PRIVATE "${PROJECT_SOURCE_DIR}/src/linux")
 target_include_directories(civ3_fixture_hle PUBLIC ${HLE} ${PCRECOMP}/runtime/recomp32)
 target_compile_definitions(civ3_fixture_hle PUBLIC RECOMP_RETADDR=0u
                            RECOMP_MEM_BASE=0x100000000000ull HLE_WITH_FFMPEG)
@@ -25,3 +26,9 @@ foreach(_test win32hle pe_loader host gdi)
 endforeach()
 set_tests_properties(civ3_host_smoke hle_win32hle hle_pe_loader hle_host hle_gdi
   PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy" TIMEOUT 60 RUN_SERIAL TRUE)
+
+add_executable(civ3_bitmap_test bitmap_safety_selftest.c)
+target_include_directories(civ3_bitmap_test PRIVATE ../src/linux)
+target_link_libraries(civ3_bitmap_test PRIVATE civ3_fixture_hle)
+add_test(NAME macos_bitmap_safety COMMAND civ3_bitmap_test)
+set_tests_properties(macos_bitmap_safety PROPERTIES TIMEOUT 30)
