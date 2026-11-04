@@ -231,3 +231,30 @@ their **disposable copied installations and test saves** by default once
 their verdicts, screenshots and logs are recorded. Use
 `--keep-test-games` only when you need a clone for debugging.
 Normal saves and the original installation are never cleanup targets.
+
+
+## Single-player compatibility verification
+
+See the [Apple Silicon single-player matrix](macos-singleplayer-coverage.md)
+for long-running campaign saves, the stock Conquests scenarios and installed
+BIQ/BIX rules mods. Reproducible test entrypoints are in
+`tools/macos_campaign_soak.py`, `tools/macos_scenario_soak.py`, and
+`tools/macos_mod_soak.py`. They create isolated APFS game copies and clean up
+those disposable copies when the run ends, leaving only evidence logs and
+framebuffers. A scenario that loads its map but does not complete a game turn
+is recorded separately from a full pass.
+
+
+## DirectSound ownership and playback safety
+
+The Apple Silicon host uses a [build-directory overlay](macos-audio-memory.md)
+to release duplicate-buffer allocations on slot exhaustion, validate audio
+stream and PCM format inputs, and synchronize live mixer format/master-gain
+changes. The source-only regression covers 256 live buffers, 4,096 rejected
+duplicates and 2,048 normal create/release cycles without leaked native
+heap growth. This is targeted coverage, not a claim that all SDL/FFmpeg
+allocations in a full campaign were audited.
+
+The legacy `tools/playtest.py` runner also now discards each disposable
+test installation (including test autosaves) when its log/contact sheet has
+been saved. For investigating failed tests, pass `--keep-test-games`.

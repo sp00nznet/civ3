@@ -1,12 +1,17 @@
 # Civilization III: Conquests — Static Recompilation
 
+> **Apple Silicon audio stability:** fixed DirectSound buffer-duplication
+> leaks and unsafe audio format/stream input handling. The measured native
+> allocator remained steady through 4,096 rejected duplicates and 2,048
+> create/release cycles; see [audio memory testing](docs/macos-audio-memory.md).
+>
 > **Pixel safety update:** packed-color/24-bit rendering, palette bounds and
 > clipped stretch repairs are tested on `main`; see [pixel safety](docs/macos-pixel-safety.md).
 
 > **Consolidated on `main`:** all fork branches are integrated. The tested macOS
 > implementation is authoritative; earlier branch history is preserved.
 
-> **Latest safety update:** [bounded bitmap allocation and cleanup](docs/macos-bitmap-safety.md),
+> **Earlier bitmap safety:** [bounded bitmap allocation and cleanup](docs/macos-bitmap-safety.md),
 > with 78 Python and 16 native tests passing locally.
 
 > **Performance and stability:** idle-menu CPU fell by 85% in a native-window
@@ -14,6 +19,11 @@
 > Graphics-copy paths and framebuffer lifetime are improved; see the
 > [measurements, scope and regression evidence](docs/macos-performance.md).
 
+> **Apple Silicon single-player coverage:** actual campaign continuation,
+> bundled Conquests and installed rules-mod tests are documented in
+> [the compatibility matrix](docs/macos-singleplayer-coverage.md). The larger
+> scenarios still need additional AI-turn and long-session verification.
+>
 > **Native macOS runtime update:** improved CPU-state isolation and guest-function
 > lookup caching, with source-controlled Finder launcher and automatic cleanup
 > of disposable QA copies. See [runtime details](docs/macos-runtime-2026.md).

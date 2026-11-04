@@ -3,6 +3,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import errno
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from macos_qa_cleanup import remove_clones
@@ -67,6 +69,36 @@ class QACleanupTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("--keep-test-games", result.stdout)
                 self.assertIn(required, result.stdout)
+
+    def test_retries_transient_directory_not_empty(self):
+        folder = self.output / "save-game"
+        folder.mkdir()
+        (folder / "test.SAV").write_text("test")
+        from macos_qa_cleanup import shutil as local_shutil
+        real_rmtree = local_shutil.rmtree
+        attempts = []
+
+        def flaky_rmtree(path):
+            attempts.append(path)
+            if len(attempts) == 1:
+                raise OSError(errno.ENOTEMPTY, "Directory not empty", str(path))
+            return real_rmtree(path)
+
+        with patch("macos_qa_cleanup.shutil.rmtree", side_effect=flaky_rmtree):
+            self.assertEqual(remove_clones(self.output, ("save-game",)), ["save-game"])
+        self.assertEqual(len(attempts), 2)
+        self.assertFalse(folder.exists())
+        self.assertTrue((self.real_game / "Conquests/Saves/real.SAV").exists())
+
+    def test_fails_without_retry_for_unexpected_errors(self):
+        folder = self.output / "save-game"
+        folder.mkdir()
+        with patch("macos_qa_cleanup.shutil.rmtree",
+                   side_effect=OSError(errno.EACCES, "Permission denied")) as mocked:
+            with self.assertRaises(OSError):
+                remove_clones(self.output, ("save-game",))
+        self.assertEqual(mocked.call_count, 1)
+        self.assertTrue(folder.is_dir())
 
     def test_idempotent_for_absent_clones(self):
         self.assertEqual(remove_clones(self.output, ("save-game", "reload-game")), [])

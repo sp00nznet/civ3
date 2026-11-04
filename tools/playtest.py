@@ -28,6 +28,8 @@ import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from macos_qa_cleanup import remove_clones
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The native Linux build when this is Linux (README, Linux, native).
@@ -202,7 +204,7 @@ def farm(d):
     return os.path.join(d, 'Conquests')
 
 
-def run(name, args, seconds, every):
+def run(name, args, seconds, every, keep_test_games=False):
     d = os.path.join(OUT, name)
     os.makedirs(d, exist_ok=True)
     game = farm(os.path.join(d, 'game'))
@@ -224,7 +226,8 @@ def run(name, args, seconds, every):
                                   timeout=seconds + 900).returncode
         except subprocess.TimeoutExpired:
             code = 'timeout'
-    text = open(log, errors='replace').read()
+    with open(log, errors='replace') as stream:
+        text = stream.read()
     if os.path.exists(mp4):
         subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', mp4, '-vf',
                         'fps=1/%g,scale=320:-1,tile=4x4' % max(every, seconds / 16.0), '-frames:v', '1',
@@ -246,6 +249,11 @@ def run(name, args, seconds, every):
         bad.append('expected exit %d' % exp['exit'])
     elif code not in (0, 4):
         bad.append('exit %s' % code)
+    if not keep_test_games:
+        try:
+            remove_clones(Path(d), ("game",))
+        except (OSError, ValueError) as error:
+            bad.append(f"QA copy cleanup failed: {error}")
     return name, code, bad, game
 
 
@@ -255,6 +263,8 @@ def main():
     ap.add_argument('--list', action='store_true')
     ap.add_argument('--jobs', type=int, default=4)
     ap.add_argument('--every', type=float, default=5, help='contact-sheet spacing, seconds')
+    ap.add_argument('--keep-test-games', action='store_true',
+                    help='Keep disposable per-case game copies and test saves (off by default)')
     a = ap.parse_args()
     if a.list:
         for n, (args, s) in CASES.items():
@@ -266,7 +276,7 @@ def main():
     failed = 0
     names = [n for n in CASES if not a.cases or any(fnmatch.fnmatch(n, p) for p in a.cases)]
     with ThreadPoolExecutor(a.jobs) as ex:
-        for name, code, bad, game in ex.map(lambda n: run(n, *CASES[n], a.every), names):
+        for name, code, bad, game in ex.map(lambda n: run(n, *CASES[n], a.every, a.keep_test_games), names):
             print('%s %-22s exit %-7s %s%s' % ('FAIL' if bad else 'pass', name, code, '; '.join(game) or '-',
                                                    ('  !! ' + ' | '.join(bad[:3])) if bad else ''))
             failed += bool(bad)

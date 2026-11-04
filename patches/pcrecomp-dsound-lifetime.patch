@@ -1,0 +1,147 @@
+--- dsound.c
++++ dsound.c
+@@ -53,7 +53,11 @@
+ static SDL_AudioDeviceID g_dev;
+ static int g_audio_ok = -1;
+ static float g_master = 1.0f;
+-void hle_dsound_set_master(float gain) { g_master = gain; }
++void hle_dsound_set_master(float gain) {
++    pthread_mutex_lock(&g_mix);
++    g_master = gain;
++    pthread_mutex_unlock(&g_mix);
++}
+ 
+ static void gains(dsbuf *b) {
+     float v = b->volume <= -10000 ? 0.0f : powf(10.0f, (float)b->volume / 2000.0f);
+@@ -78,6 +82,9 @@
+ #define STREAM_FRAMES (1 << 17)
+ static struct { int used, channels, rate; float gain; int16_t *ring; uint32_t rd, wr; double pos; } g_stream[MAX_STREAMS];
+ int hle_audio_stream_open(int rate, int channels) {
++    /* Invalid format must never create a mixer slot or access outside
++     * stereo storage. Reject it before initializing the audio device. */
++    if (rate <= 0 || channels < 1 || channels > 2) return -1;
+     if (!audio_open_once()) return -1;
+     pthread_mutex_lock(&g_mix);
+     int id = -1;
+@@ -85,6 +92,7 @@
+         if (!g_stream[i].used) {
+             id = i;
+             g_stream[i].ring = (int16_t *)calloc(STREAM_FRAMES * 2, 2);
++            if (!g_stream[i].ring) { id = -1; break; }
+             g_stream[i].used = 1, g_stream[i].channels = channels, g_stream[i].rate = rate, g_stream[i].gain = 1.0f;
+             g_stream[i].rd = g_stream[i].wr = 0, g_stream[i].pos = 0;
+         }
+@@ -92,8 +100,9 @@
+     return id;
+ }
+ void hle_audio_stream_push(int id, const int16_t *pcm, int frames) {
+-    if (id < 0 || id >= MAX_STREAMS) return;
+-    pthread_mutex_lock(&g_mix);
++    if (id < 0 || id >= MAX_STREAMS || !pcm || frames <= 0) return;
++    pthread_mutex_lock(&g_mix);
++    if (!g_stream[id].used || !g_stream[id].ring) { pthread_mutex_unlock(&g_mix); return; }
+     for (int f = 0; f < frames && g_stream[id].wr - g_stream[id].rd < STREAM_FRAMES - 1; f++, g_stream[id].wr++) {
+         uint32_t k = g_stream[id].wr % STREAM_FRAMES;
+         g_stream[id].ring[2 * k] = pcm[f * g_stream[id].channels];
+@@ -108,7 +117,12 @@
+     pthread_mutex_unlock(&g_mix);
+     return n;
+ }
+-void hle_audio_stream_gain(int id, float gain) { if (id >= 0 && id < MAX_STREAMS) g_stream[id].gain = gain; }
++void hle_audio_stream_gain(int id, float gain) {
++    if (id < 0 || id >= MAX_STREAMS) return;
++    pthread_mutex_lock(&g_mix);
++    if (g_stream[id].used) g_stream[id].gain = gain;
++    pthread_mutex_unlock(&g_mix);
++}
+ void hle_audio_stream_close(int id) {
+     if (id < 0 || id >= MAX_STREAMS) return;
+     pthread_mutex_lock(&g_mix);
+@@ -152,10 +166,11 @@
+             while (g_stream[i].pos >= 1.0 && g_stream[i].rd < g_stream[i].wr) g_stream[i].pos -= 1.0, g_stream[i].rd++;
+         }
+     }
++    float master = g_master; /* take one synchronized gain snapshot per callback */
+     pthread_mutex_unlock(&g_mix);
+     int16_t *out = (int16_t *)stream;
+     for (int k = 0; k < 2 * frames; k++) {
+-        float v = acc[k] * g_master * 32767.0f;
++        float v = acc[k] * master * 32767.0f;
+         out[k] = (int16_t)(v > 32767.0f ? 32767 : v < -32768.0f ? -32768 : v);
+     }
+ }
+@@ -378,7 +393,17 @@
+ static void b_SetFormat(void) {                          /* the primary's: the mix is at the device rate anyway */
+     dsbuf *b = buf_of(A32(0));
+     uint32_t w = A32(1);
+-    if (b && w) b->channels = MEM16(w + 2), b->rate = (int)MEM32(w + 4), b->bits = MEM16(w + 14), b->block = MEM16(w + 12);
++    if (!b || !w) RET(DSERR_INVALIDPARAM, 2);
++    uint16_t tag = MEM16(w), channels = MEM16(w + 2), block = MEM16(w + 12), bits = MEM16(w + 14);
++    uint32_t rate = MEM32(w + 4);
++    /* Reject a broken PCM layout before the audio callback reads it.
++     * DirectSound buffers may be in use while a guest changes this state. */
++    if (tag != 1 || channels < 1 || channels > 2 || (bits != 8 && bits != 16) ||
++        rate == 0 || rate > 384000 || block != channels * (bits / 8))
++        RET(DSERR_INVALIDPARAM, 2);
++    pthread_mutex_lock(&g_mix);
++    b->channels = channels, b->rate = (int)rate, b->bits = bits, b->block = block;
++    pthread_mutex_unlock(&g_mix);
+     RET(DS_OK, 2);
+ }
+ static void b_SetVolume(void) {
+@@ -426,8 +451,11 @@
+ static void d_CreateSoundBuffer(void) {                  /* (this, &DSBUFFERDESC, &out, outer) */
+     uint32_t d = A32(1), out = A32(2);
+     if (!d || !out) RET(DSERR_INVALIDPARAM, 4);
++    MEM32(out) = 0; /* never leave a stale handle after failure */
+     uint32_t flags = MEM32(d + 4), bytes = MEM32(d + 8), wfx = MEM32(d + 16);
++    if (!(flags & DSBCAPS_PRIMARYBUFFER) && !bytes) RET(DSERR_INVALIDPARAM, 4);
+     dsbuf *b = (dsbuf *)calloc(1, sizeof *b);
++    if (!b) RET(DSERR_INVALIDPARAM, 4);
+     b->flags = flags, b->primary = (flags & DSBCAPS_PRIMARYBUFFER) != 0;
+     b->channels = 2, b->bits = 16, b->rate = 22050, b->block = 4;
+     if (wfx) {
+@@ -441,8 +469,10 @@
+     if (b->primary) bytes = 4096 * 4;
+     b->bytes = bytes;
+     b->data = (uint8_t *)hle_alloc(bytes ? bytes : 4);
++    if (!b->data) { free(b); RET(DSERR_INVALIDPARAM, 4); }
+     if (b->bits == 8) memset(b->data, 128, bytes);
+     b->data_refs = (int *)malloc(sizeof(int));
++    if (!b->data_refs) { hle_free(b->data); free(b); RET(DSERR_INVALIDPARAM, 4); }
+     *b->data_refs = 1;
+     gains(b);
+     uint32_t o = new_buffer(b);
+@@ -465,16 +495,29 @@
+ }
+ static void d_DuplicateSoundBuffer(void) {               /* (this, original, &out) */
+     dsbuf *src = buf_of(A32(1));
+-    if (!src || !A32(2)) RET(DSERR_INVALIDPARAM, 3);
++    uint32_t out = A32(2);
++    if (!out) RET(DSERR_INVALIDPARAM, 3);
++    MEM32(out) = 0; /* never return the caller's stale COM handle */
++    if (!src) RET(DSERR_INVALIDPARAM, 3);
+     dsbuf *b = (dsbuf *)malloc(sizeof *b);
++    if (!b) RET(DSERR_INVALIDPARAM, 3);
+     pthread_mutex_lock(&g_mix);
+     *b = *src;
+     (*b->data_refs)++;
+     pthread_mutex_unlock(&g_mix);
+     b->playing = 0, b->pos = 0;
+     uint32_t o = new_buffer(b);
+-    MEM32(A32(2)) = o;
+-    RET(o ? DS_OK : DSERR_INVALIDPARAM, 3);
++    if (!o) {
++        /* The COM slot table is full: undo the shared sample reference
++         * and the native wrapper allocation. The old code leaked both. */
++        pthread_mutex_lock(&g_mix);
++        --*b->data_refs;
++        pthread_mutex_unlock(&g_mix);
++        free(b);
++        RET(DSERR_INVALIDPARAM, 3);
++    }
++    MEM32(out) = o;
++    RET(DS_OK, 3);
+ }
+ static void d_SetCooperativeLevel(void) { RET(DS_OK, 3); }
+ static void d_Compact(void) { RET(DS_OK, 1); }

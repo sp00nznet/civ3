@@ -53,3 +53,12 @@ add_executable(civ3_dispatch_cache_test dispatch_cache_selftest.c)
 target_link_libraries(civ3_dispatch_cache_test PRIVATE civ3_fixture_hle)
 add_test(NAME macos_dispatch_cache COMMAND civ3_dispatch_cache_test)
 set_tests_properties(macos_dispatch_cache PROPERTIES TIMEOUT 30)
+
+# Sound COM ownership stress: no proprietary game data or audio device.
+if(APPLE)
+  add_executable(civ3_dsound_lifetime_test dsound_lifetime_selftest.c)
+  target_link_libraries(civ3_dsound_lifetime_test PRIVATE civ3_fixture_hle)
+  add_test(NAME macos_dsound_lifetime COMMAND civ3_dsound_lifetime_test)
+  set_tests_properties(macos_dsound_lifetime PROPERTIES
+    TIMEOUT 30 ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy")
+endif()

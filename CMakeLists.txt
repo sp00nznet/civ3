@@ -52,7 +52,8 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
                                 "screen.c|pcrecomp-screen-thread.patch"
                                 "gdidc.c|pcrecomp-gdi-performance.patch"
                                 "host_lite.c|pcrecomp-machine-snapshot.patch"
-                                "gdi32.c|pcrecomp-bitmap-allocation.patch")
+                                "gdi32.c|pcrecomp-bitmap-allocation.patch"
+                                "dsound.c|pcrecomp-dsound-lifetime.patch")
       string(REPLACE "|" ";" PATCH_FIELDS "${PATCH_SPEC}")
       list(GET PATCH_FIELDS 0 PATCH_SOURCE)
       list(GET PATCH_FIELDS 1 PATCH_FILE)
