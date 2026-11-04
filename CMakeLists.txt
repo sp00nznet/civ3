@@ -73,6 +73,16 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
       if(NOT PATCH_RESULT EQUAL 0)
         message(FATAL_ERROR "${PATCH_FILE} failed; use the pinned pcrecomp revision")
       endif()
+      if(PATCH_SOURCE STREQUAL "mss.c")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/mss.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-mss-bounds.patch"
+                        RESULT_VARIABLE MSS_BOUNDS_RESULT)
+        if(NOT MSS_BOUNDS_RESULT EQUAL 0)
+          message(FATAL_ERROR "Miles input bounds patch failed; use pinned pcrecomp runtime")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-mss-bounds.patch")
+      endif()
       if(PATCH_SOURCE STREQUAL "kernel32_ext.c")
         execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/kernel32_ext.c"
                         "${CMAKE_SOURCE_DIR}/patches/pcrecomp-file-sharing.patch"

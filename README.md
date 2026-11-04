@@ -1,5 +1,10 @@
 # Civilization III: Conquests — Static Recompilation
 
+> **MP3 decoder hardening:** a bounds violation in the guest audio fetch
+> callback is now rejected, and FFmpeg stream allocation/cleanup is safer.
+> A private 195-second Persian campaign progressed from turn 111 to 121 with
+> no runaway RSS growth observed; see [decoder and memory results](docs/macos-miles-decoder-safety.md).
+>
 > **Apple Silicon audio stability:** fixed DirectSound buffer-duplication
 > leaks and unsafe audio format/stream input handling. The measured native
 > allocator remained steady through 4,096 rejected duplicates and 2,048

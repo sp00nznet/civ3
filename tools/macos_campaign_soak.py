@@ -14,6 +14,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tools"))
 from macos_roundtrip import private_game, digest, turns, BAD
 from macos_smoke import assess
 from macos_qa_cleanup import remove_clones
+from macos_rss import run_with_rss, summarize_rss
 
 ROOT=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser()
@@ -21,6 +22,8 @@ parser.add_argument("--seed-save", type=Path, required=True)
 parser.add_argument("--output", type=Path, required=True)
 parser.add_argument("--play", type=int, default=180)
 parser.add_argument("--interval", type=int, default=950)
+parser.add_argument("--rss-sample", action="store_true",
+                    help="Periodically sample this game's resident memory (RSS)")
 args=parser.parse_args()
 source=(ROOT/"game").resolve()
 seed=args.seed_save.resolve()
@@ -47,12 +50,18 @@ try:
              "--move","240,425@1","--open","240,425@2","--click","621,557@10",
              "--wait","0xA74EA4@11","--key","0x0D@14","--autopilot",f"{args.interval}@20"]
     print("SOAK command args:",command,flush=True)
-    with log.open("w") as stream:
-        result=subprocess.run(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT,
-                              timeout=args.play+160)
+    if args.rss_sample:
+        returncode, samples = run_with_rss(command, ROOT, log, args.play + 160)
+        report["memory"] = summarize_rss(samples)
+        (output/"rss-samples.json").write_text(json.dumps(samples, indent=2)+"\n")
+    else:
+        with log.open("w") as stream:
+            result=subprocess.run(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT,
+                                  timeout=args.play+160)
+        returncode = result.returncode
     content=log.read_text(errors="replace")
     loaded,finish=turns(content)
-    failures=assess(result.returncode,content,shot)
+    failures=assess(returncode,content,shot)
     failures += [f"Runtime: {x}" for x in BAD if x in content]
     if loaded is None or loaded<1:failures.append("load milestone absent")
     if finish is None or loaded is not None and finish<loaded+5:failures.append("fewer than 5 completed turns")
@@ -61,7 +70,7 @@ try:
     if digest(seed)!=seed_digest or (digest(ini) if ini.exists() else None)!=ini_digest:
         failures.append("source game save/preferences changed")
     report.update(result="pass" if not failures else "fail",loaded_turn=loaded,final_turn=finish,
-                  exit=result.returncode,failures=failures,autosave_count=len(autos),
+                  exit=returncode,failures=failures,autosave_count=len(autos),
                   autosave_names=[p.name for p in autos],shot=shot.name,log=log.name)
     print(json.dumps(report,indent=2),flush=True)
 finally:

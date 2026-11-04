@@ -258,3 +258,20 @@ allocations in a full campaign were audited.
 The legacy `tools/playtest.py` runner also now discards each disposable
 test installation (including test autosaves) when its log/contact sheet has
 been saved. For investigating failed tests, pass `--keep-test-games`.
+
+
+## MP3 decoder memory and long-session RSS
+
+The Miles MP3 codec includes a [verified input-bounds and cleanup overlay](macos-miles-decoder-safety.md).
+It rejects fetch callbacks that over-report requested input bytes, checks
+FFmpeg allocation failure paths, and prevents malformed decoder data from
+being copied past allocated guest or host buffers. The native selftest
+reproduces the formerly accepted oversized callback and exercises 100
+MP3 opens/closes with no measured native malloc growth.
+
+For actual-game memory observation, `tools/macos_campaign_soak.py`
+accepts `--rss-sample`, retaining timestamped RSS readings, logs and a
+final framebuffer from an isolated game copy. RSS can grow legitimately
+due to game data and mapped caches; do not treat RSS growth alone as a
+memory leak. The 195-second Persian test and limitations are in the linked
+report.
