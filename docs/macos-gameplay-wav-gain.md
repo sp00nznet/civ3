@@ -6,6 +6,12 @@ software-mixed effects buffer, but that also muted music carried by the same
 buffer after the main-menu music stopped. The user reported that all sound went
 quiet. The revised approach aims to preserve both music and gameplay effects.
 
+**November 5 follow-up:** the user still reported broken sound. The later
+[timer and committed-buffer investigation](macos-audio-timers.md) reproduced
+full-volume clipping despite correcting callback catch-up and concurrent PCM
+reads. The results below describe bounded mitigation tests, not a confirmed
+audible fix.
+
 ## Observed cause and experiments
 
 The menu soundtrack uses an MP3 DirectSound buffer (flags `0x10080`). During

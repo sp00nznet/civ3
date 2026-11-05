@@ -41,7 +41,8 @@ def verify(log: str, code: int, image: Path, settings: dict[str, str],
     return failures
 
 
-def run_case(name: str, source: Path, binary: Path, output: Path) -> dict:
+def run_case(name: str, source: Path, binary: Path, output: Path,
+             generation_wait: int = 0) -> dict:
     size, faction = CASES[name]
     out = output / name
     out.mkdir()
@@ -55,14 +56,21 @@ def run_case(name: str, source: Path, binary: Path, output: Path) -> dict:
     ini.write_text(f'[Conquests]\nPlayIntro=0\nKeepRes=0\nVoice Quality=0\n'
                    f'Rules={0x481df:032b}\nWorldSize={size}\nFaction0={faction}\n')
     image, log_path = out / 'final.ppm', out / 'run.log'
+    # Leave extra time after Quick Start for world generation on a busy Mac.
+    # Keep the menu gesture at its usual time; shift every later action and
+    # extend the run equally, preserving the time spent actually playing.
+    actions = ACTIONS.copy()
+    for i in range(5, len(actions), 2):
+        value, at = actions[i].rsplit('@', 1)
+        actions[i] = f'{value}@{int(at) + generation_wait}'
     command = [str(binary), '--headless', '--run', '--game', str(game), '--work', str(ROOT/'work'),
-               '--exe', str(ROOT/'work/Civ3Conquests.exe'), '--watchdog', '120', '--play', '70',
-               '--shot', str(image)] + ACTIONS
+               '--exe', str(ROOT/'work/Civ3Conquests.exe'), '--watchdog', str(120 + generation_wait),
+               '--play', str(70 + generation_wait), '--shot', str(image)] + actions
     print(f'Running culture-linked {name}; log: {log_path}', flush=True)
     with log_path.open('w') as stream:
         try:
             code = subprocess.run(command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT,
-                                  timeout=200).returncode
+                                  timeout=200 + generation_wait).returncode
         except subprocess.TimeoutExpired:
             code = -999
     log = log_path.read_text(errors='replace')
@@ -71,7 +79,7 @@ def run_case(name: str, source: Path, binary: Path, output: Path) -> dict:
     record = {'success': not failures, 'returncode': code, 'final_turn': turns(log)[1],
               'failures': failures, 'settings': {k: v for k, v in settings.items()
                   if k in ('Rules', 'ActualWorldSize', 'WorldSeed') or k.startswith('ActualCiv')},
-              'binary_sha256': digest(binary)}
+              'binary_sha256': digest(binary), 'generation_wait': generation_wait}
     (out/'result.json').write_text(json.dumps(record, indent=2)+'\n')
     print(f"{name}: {'PASS' if record['success'] else 'FAIL'}, turn {record['final_turn']}", flush=True)
     return record
@@ -83,9 +91,13 @@ def main() -> int:
     parser.add_argument('--game-dir', type=Path, default=ROOT/'game')
     parser.add_argument('--binary', type=Path, default=ROOT/'build-macos/civ3')
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--generation-wait', type=int, default=0,
+                        help='Extra seconds after Quick Start before gameplay actions (0..120)')
     parser.add_argument('--keep-test-games', action='store_true',
                         help='Keep disposable game copies and saves for debugging (off by default)')
     args = parser.parse_args()
+    if not 0 <= args.generation_wait <= 120:
+        parser.error('Generation wait must be between 0 and 120 seconds')
     source, binary = (p.expanduser().resolve() for p in (args.game_dir, args.binary))
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
     output = (args.output or ROOT/'work'/f'newgame-{stamp}').expanduser().resolve()
@@ -99,7 +111,7 @@ def main() -> int:
     report = {'success': False, 'cases': {}, 'source_preferences_unchanged': False}
     try:
         for name in args.cases or CASES:
-            report['cases'][name] = run_case(name, source, binary, output)
+            report['cases'][name] = run_case(name, source, binary, output, args.generation_wait)
         after = digest(original_ini) if original_ini.is_file() else None
         report['source_preferences_unchanged'] = before == after
         report['success'] = all(r['success'] for r in report['cases'].values()) and before == after

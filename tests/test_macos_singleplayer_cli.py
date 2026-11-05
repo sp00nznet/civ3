@@ -6,7 +6,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = {
-    "macos_campaign_soak.py": ("--seed-save", "--output", "--interval", "--rss-sample"),
+    "macos_campaign_soak.py": ("--seed-save", "--output", "--binary", "--interval", "--rss-sample"),
     "macos_scenario_soak.py": ("--output", "--interval", "--rss-sample", "mesopotamia", "wwii-pacific"),
     "macos_mod_soak.py": ("--output", "--interval", "no-civ-traits", "age-of-bronze"),
 }

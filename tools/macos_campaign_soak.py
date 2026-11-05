@@ -20,6 +20,8 @@ ROOT=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser()
 parser.add_argument("--seed-save", type=Path, required=True)
 parser.add_argument("--output", type=Path, required=True)
+parser.add_argument("--binary", type=Path, default=ROOT/"build-macos/civ3",
+                    help="Native executable to test without replacing the playable build")
 parser.add_argument("--play", type=int, default=180)
 parser.add_argument("--interval", type=int, default=950)
 parser.add_argument("--rss-sample", action="store_true",
@@ -28,6 +30,9 @@ args=parser.parse_args()
 source=(ROOT/"game").resolve()
 seed=args.seed_save.resolve()
 output=args.output.resolve()
+binary=args.binary.expanduser().resolve()
+if not binary.is_file():
+    parser.error("Built native executable required")
 if not seed.is_file() or not seed.is_relative_to(source):
     parser.error("Seed must be an existing local game save")
 if output.exists() or output.is_relative_to(source) or source.is_relative_to(output):
@@ -38,13 +43,13 @@ output.mkdir(parents=True)
 ini=source/"Conquests/conquests.ini"
 ini_digest=digest(ini) if ini.exists() else None
 seed_digest=digest(seed)
-report={"seed":str(seed),"source_sha256":seed_digest,"result":"not-run","binary_sha256":digest(ROOT/"build-macos/civ3")}
+report={"seed":str(seed),"source_sha256":seed_digest,"result":"not-run","binary_sha256":digest(binary)}
 clone=None
 try:
     clone=private_game(source,output/"private-game",seed,seed.name)
     shot=output/"final.ppm"
     log=output/"run.log"
-    command=[str(ROOT/"build-macos/civ3"),"--headless","--run","--watchdog",str(args.play+120),
+    command=[str(binary),"--headless","--run","--watchdog",str(args.play+120),
              "--play",str(args.play),"--game",str(clone),"--work",str(ROOT/"work"),
              "--exe",str(ROOT/"work/Civ3Conquests.exe"),"--shot",str(shot),
              "--move","240,425@1","--open","240,425@2","--click","621,557@10",

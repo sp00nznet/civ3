@@ -6,6 +6,9 @@ target_include_directories(civ3_fixture_hle PRIVATE "${PROJECT_SOURCE_DIR}/src/l
 target_include_directories(civ3_fixture_hle PUBLIC ${HLE} ${PCRECOMP}/runtime/recomp32)
 target_compile_definitions(civ3_fixture_hle PUBLIC RECOMP_RETADDR=0u
                            RECOMP_MEM_BASE=0x100000000000ull HLE_WITH_FFMPEG)
+if(APPLE)
+  target_compile_definitions(civ3_fixture_hle PRIVATE CIV3_TEST_AUDIO_SNAPSHOT)
+endif()
 target_compile_options(civ3_fixture_hle PRIVATE -fno-strict-aliasing -fwrapv)
 target_link_libraries(civ3_fixture_hle PUBLIC PkgConfig::SDL2 PkgConfig::SDL2_TTF PkgConfig::FFMPEG pthread m)
 
@@ -93,4 +96,26 @@ if(APPLE)
   target_include_directories(civ3_sfx_softlimit_test PRIVATE ../src/linux)
   add_test(NAME macos_sfx_softlimit COMMAND civ3_sfx_softlimit_test)
   set_tests_properties(macos_sfx_softlimit PROPERTIES TIMEOUT 10)
+endif()
+
+# Synthetic DirectSound Lock/Unlock snapshot isolation. No assets.
+if(APPLE)
+  add_executable(civ3_dsound_atomic_snapshot_test dsound_atomic_snapshot_selftest.c)
+  target_link_libraries(civ3_dsound_atomic_snapshot_test PRIVATE civ3_fixture_hle)
+  add_test(NAME macos_dsound_atomic_snapshot COMMAND civ3_dsound_atomic_snapshot_test)
+  set_tests_properties(macos_dsound_atomic_snapshot PROPERTIES TIMEOUT 30
+    ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy")
+endif()
+
+if(APPLE)
+  add_executable(civ3_winmm_timer_schedule_test winmm_timer_schedule_selftest.c)
+  target_include_directories(civ3_winmm_timer_schedule_test PRIVATE ../src/linux)
+  add_test(NAME macos_winmm_timer_schedule COMMAND civ3_winmm_timer_schedule_test)
+  set_tests_properties(macos_winmm_timer_schedule PROPERTIES TIMEOUT 10)
+
+  add_executable(civ3_winmm_timer_test winmm_timer_selftest.c)
+  target_link_libraries(civ3_winmm_timer_test PRIVATE civ3_fixture_hle)
+  add_test(NAME macos_winmm_timer COMMAND civ3_winmm_timer_test)
+  set_tests_properties(macos_winmm_timer PROPERTIES TIMEOUT 10
+    ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy")
 endif()

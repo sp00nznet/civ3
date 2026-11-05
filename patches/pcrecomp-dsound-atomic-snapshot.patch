@@ -1,0 +1,105 @@
+--- dsound.c
++++ dsound.c
+@@ -40,6 +40,7 @@
+ 
+ typedef struct {
+     uint8_t *data;              /* the samples, guest-visible */
++    uint8_t *play_data;         /* native snapshot, committed only on Unlock */
+     int *data_refs;             /* shared with duplicates */
+     uint32_t bytes, flags;
+     int channels, bits, rate, block;
+@@ -91,7 +92,7 @@
+ }
+ 
+ static inline float sample(const dsbuf *b, uint32_t frame, int ch) {
+-    const uint8_t *p = b->data + (size_t)frame * (uint32_t)b->block + (b->channels > 1 ? (size_t)ch * (uint32_t)(b->bits / 8) : 0);
++    const uint8_t *p = b->play_data + (size_t)frame * (uint32_t)b->block + (b->channels > 1 ? (size_t)ch * (uint32_t)(b->bits / 8) : 0);
+     return b->bits == 16 ? (float)*(const int16_t *)p / 32768.0f : ((float)*p - 128.0f) / 128.0f;
+ }
+ 
+@@ -370,7 +371,13 @@
+         g_buf[SLOT(self)] = NULL;
+         pthread_mutex_unlock(&g_mix);
+         if (b) {
+-            if (--*b->data_refs == 0) { hle_free(b->data); free(b->data_refs); }
++            if (--*b->data_refs == 0) {
++                /* DuplicateSoundBuffer shares the backing PCM and snapshot.
++                 * Both are released together with the last COM reference. */
++                hle_free(b->data);
++                free(b->play_data);
++                free(b->data_refs);
++            }
+             free(b);
+         }
+         hle_com_free(self);
+@@ -435,7 +442,43 @@
+     if (A32(6)) MEM32(A32(6)) = n - n1;
+     RET(DS_OK, 8);
+ }
+-static void b_Unlock(void) { RET(DS_OK, 5); }            /* (this, p1, n1, p2, n2): the memory is the buffer */
++/* DirectSound Lock hands guest code a writable PCM region. SDL runs its audio
++ * callback concurrently with that guest write: reading the source directly
++ * makes it possible to play torn 16-bit samples and old/new mixed frames.
++ * The snapshot is shared across duplicate COM buffers, but only refreshed
++ * after the game finishes the transaction by calling Unlock.
++ */
++static int dsound_commit_guest_pcm(dsbuf *b, uint32_t p1, uint32_t n1,
++                                   uint32_t p2, uint32_t n2) {
++    if (!b || !b->data || !b->play_data || b->primary) return 0;
++    uint32_t base = hle_va(b->data);
++    if (p1 < base || p1-base > b->bytes || n1 > b->bytes-(p1-base) ||
++        n2 > b->bytes || (n2 && p2 != base) ||
++        ((uint64_t)n1 + n2 > b->bytes)) return 0;
++    pthread_mutex_lock(&g_mix);
++    if (n1) memcpy(b->play_data + (p1-base), b->data + (p1-base), n1);
++    if (n2) memcpy(b->play_data, b->data, n2);
++    pthread_mutex_unlock(&g_mix);
++    return 1;
++}
++static void b_Unlock(void) {
++    dsbuf *b = buf_of(A32(0));
++    RET(dsound_commit_guest_pcm(b, A32(1), A32(2), A32(3), A32(4)) ?
++        DS_OK : DSERR_INVALIDPARAM, 5);
++}
++#ifdef CIV3_TEST_AUDIO_SNAPSHOT
++/* Read-only test hook. This is not present in production game binaries. */
++int hle_dsound_snapshot_for_test(uint32_t self, uint32_t offset,
++                                uint8_t *dst, uint32_t n) {
++    dsbuf *b = buf_of(self);
++    if (!b || !dst || !b->play_data || offset > b->bytes ||
++        n > b->bytes-offset) return 0;
++    pthread_mutex_lock(&g_mix);
++    memcpy(dst, b->play_data+offset, n);
++    pthread_mutex_unlock(&g_mix);
++    return 1;
++}
++#endif
+ static void b_Play(void) {                               /* (this, reserved, priority, flags) */
+     dsbuf *b = buf_of(A32(0));
+     if (!b) RET(DSERR_INVALIDPARAM, 4);
+@@ -540,10 +583,24 @@
+     if (b->bits == 8) memset(b->data, 128, bytes);
+     b->data_refs = (int *)malloc(sizeof(int));
+     if (!b->data_refs) { hle_free(b->data); free(b); RET(DSERR_INVALIDPARAM, 4); }
++    b->play_data = (uint8_t *)malloc(bytes ? bytes : 4);
++    if (!b->play_data) {
++        hle_free(b->data);
++        free(b->data_refs);
++        free(b);
++        RET(DSERR_INVALIDPARAM, 4);
++    }
++    memcpy(b->play_data, b->data, bytes);
+     *b->data_refs = 1;
+     gains(b);
+     uint32_t o = new_buffer(b);
+-    if (!o) { hle_free(b->data); free(b->data_refs); free(b); RET(DSERR_INVALIDPARAM, 4); }
++    if (!o) {
++        hle_free(b->data);
++        free(b->play_data);
++        free(b->data_refs);
++        free(b);
++        RET(DSERR_INVALIDPARAM, 4);
++    }
+     MEM32(out) = o;
+     RET(DS_OK, 4);
+ }

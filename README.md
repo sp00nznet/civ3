@@ -5,11 +5,12 @@
 > read-only access checks. A private WWII in the Pacific test reached
 > January 1942; see [file-mapping and AI-turn evidence](docs/macos-file-mapping-safety.md).
 >
-> **Apple Silicon first-turn audio improvement:** the Mac runtime reduces
-> legacy WAV sample gain *before* the game's overdriven effects mixer, then
-> restores a safer output level. A four-turn new game and ten-turn resumed
-> campaign avoided the prior full-channel mute in silent-device tests.
-> [Details, sound-quality limitations and tests](docs/macos-gameplay-wav-gain.md).
+> **Apple Silicon audio remains under investigation:** WinMM now skips overdue
+> timer callbacks and DirectSound plays PCM committed at Unlock, with regression
+> tests for both paths. Full-volume gameplay still triggers the distortion
+> safeguard, so the existing WAV gain mitigation remains enabled.
+> [Timer/buffer findings](docs/macos-audio-timers.md) and
+> [volume mitigation and limitations](docs/macos-gameplay-wav-gain.md).
 >
 > **MP3 decoder hardening:** a bounds violation in the guest audio fetch
 > callback is now rejected, and FFmpeg stream allocation/cleanup is safer.

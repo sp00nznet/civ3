@@ -12,6 +12,25 @@
 #include "win32hle.h"
 #include "host.h"
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#include <sanitizer/allocator_interface.h>
+#define CIV3_ASAN_ALLOCATOR 1
+#endif
+#endif
+
+static size_t native_bytes_in_use(void) {
+#ifdef CIV3_ASAN_ALLOCATOR
+    /* Darwin's zone statistics include sanitizer allocator bookkeeping.
+     * Ask ASan for live allocations so these remain leak assertions. */
+    return __sanitizer_get_current_allocated_bytes();
+#else
+    malloc_statistics_t stats = {0};
+    malloc_zone_statistics(malloc_default_zone(), &stats);
+    return stats.size_in_use;
+#endif
+}
+
 #define DS_OK 0u
 #define DSERR_INVALIDPARAM 0x80070057u
 #define MAX_SLOTS 256
@@ -78,8 +97,7 @@ int main(void) {
         if (result != DS_OK || !*out) return 2;
         objects[i] = *out;
     }
-    malloc_statistics_t before = {0}, after = {0};
-    malloc_zone_statistics(malloc_default_zone(), &before);
+    size_t before = native_bytes_in_use();
     for (unsigned i = 0; i < 4096; ++i) {
         *out = 0xABCDEF01u; /* failure must not leave a stale guest handle */
         uint32_t result = duplicate(ds, objects[0], hle_va(out));
@@ -88,8 +106,7 @@ int main(void) {
             failures++;
         }
     }
-    malloc_zone_statistics(malloc_default_zone(), &after);
-    int64_t growth = (int64_t)after.size_in_use - (int64_t)before.size_in_use;
+    int64_t growth = (int64_t)native_bytes_in_use() - (int64_t)before;
     printf("Native malloc in-use growth after 4096 rejected duplicates: %lld bytes\n", (long long)growth);
     check("rejected duplicates do not leak native heap", growth < 128 * 1024);
 
@@ -130,7 +147,7 @@ int main(void) {
     /* Many ordinary sound effects are created and released during gameplay.
      * The host heap should not grow with each successful cycle either. */
     desc[2] = 2048;
-    malloc_zone_statistics(malloc_default_zone(), &before);
+    before = native_bytes_in_use();
     for (unsigned i = 0; i < 2048; ++i) {
         *out = 0;
         uint32_t result = new_source(ds, hle_va(desc), hle_va(out));
@@ -140,8 +157,7 @@ int main(void) {
         }
         release(*out);
     }
-    malloc_zone_statistics(malloc_default_zone(), &after);
-    growth = (int64_t)after.size_in_use - (int64_t)before.size_in_use;
+    growth = (int64_t)native_bytes_in_use() - (int64_t)before;
     printf("Native malloc growth after 2048 normal create/release cycles: %lld bytes\n", (long long)growth);
     check("ordinary sound effects do not grow native heap", growth < 192 * 1024);
 

@@ -85,10 +85,14 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-mss-bounds.patch")
       endif()
       if(PATCH_SOURCE STREQUAL "winmm.c")
-        # Only the full native Civilization III game gets WAV prescaling.
-        # Source-only HLE fixtures retain unmodified WinMM byte semantics.
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/winmm.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-winmm-timer-schedule.patch"
+                        RESULT_VARIABLE TIMER_SCHEDULE_RESULT)
+        if(NOT TIMER_SCHEDULE_RESULT EQUAL 0)
+          message(FATAL_ERROR "WinMM timer scheduling patch failed; use pinned pcrecomp runtime")
+        endif()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-wav-input-gain.patch")
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-winmm-timer-schedule.patch")
       endif()
       if(PATCH_SOURCE STREQUAL "dsound.c")
         execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/dsound.c"
@@ -99,6 +103,14 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-sfx-runaway.patch")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/dsound.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-dsound-atomic-snapshot.patch"
+                        RESULT_VARIABLE ATOMIC_DSOUND_RESULT)
+        if(NOT ATOMIC_DSOUND_RESULT EQUAL 0)
+          message(FATAL_ERROR "DirectSound atomic PCM snapshot patch failed")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-dsound-atomic-snapshot.patch")
       endif()
       if(PATCH_SOURCE STREQUAL "kernel32_ext.c")
         execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/kernel32_ext.c"
