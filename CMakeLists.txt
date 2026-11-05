@@ -83,6 +83,16 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-mss-bounds.patch")
       endif()
+      if(PATCH_SOURCE STREQUAL "dsound.c")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/dsound.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-sfx-runaway.patch"
+                        RESULT_VARIABLE SFX_PATCH_RESULT)
+        if(NOT SFX_PATCH_RESULT EQUAL 0)
+          message(FATAL_ERROR "SFX runaway guard patch failed; use pinned pcrecomp runtime")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-sfx-runaway.patch")
+      endif()
       if(PATCH_SOURCE STREQUAL "kernel32_ext.c")
         execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/kernel32_ext.c"
                         "${CMAKE_SOURCE_DIR}/patches/pcrecomp-file-sharing.patch"
@@ -177,6 +187,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   endif()
   if(APPLE)
     set_source_files_properties("${MACOS_HLE_DIR}/gdidc.c" "${MACOS_HLE_DIR}/gdi32.c"
+                                "${MACOS_HLE_DIR}/dsound.c"
                                 PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/src/linux")
     # Optimize only the profiled pixel-transfer layer; the lifted game and
     # thread scheduler retain their previously tested compiler settings.

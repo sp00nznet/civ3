@@ -70,3 +70,11 @@ if(APPLE)
   set_tests_properties(macos_dsound_lifetime PROPERTIES
     TIMEOUT 30 ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy")
 endif()
+
+# First-turn software-mixed SFX saturation detector; no audio device or game.
+if(APPLE)
+  add_executable(civ3_sfx_guard_test sfx_guard_selftest.c)
+  target_include_directories(civ3_sfx_guard_test PRIVATE ../src/linux)
+  add_test(NAME macos_sfx_runaway_guard COMMAND civ3_sfx_guard_test)
+  set_tests_properties(macos_sfx_runaway_guard PROPERTIES TIMEOUT 5)
+endif()

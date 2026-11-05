@@ -5,6 +5,11 @@
 > read-only access checks. A private WWII in the Pacific test reached
 > January 1942; see [file-mapping and AI-turn evidence](docs/macos-file-mapping-safety.md).
 >
+> **Apple Silicon first-turn sound fix:** a sustained distorted looping
+> effects signal is now faded out while soundtrack/music stays separate.
+> See [the diagnosis and measured safeguard](docs/macos-first-turn-sfx.md).
+> The underlying lifted software mixer still needs a deeper repair.
+>
 > **MP3 decoder hardening:** a bounds violation in the guest audio fetch
 > callback is now rejected, and FFmpeg stream allocation/cleanup is safer.
 > A private 195-second Persian campaign progressed from turn 111 to 121 with

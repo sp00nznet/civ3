@@ -297,3 +297,21 @@ test on the repaired mapping host completed the first AI turn and generated
 a January 1942 autosave. RSS profiling showed no runaway growth in that
 one bounded sample, **not a guarantee** that every longer campaign is
 leak-free or faster.
+
+
+## First-turn repeating sound safeguard
+
+A [Mac-only safety guard](macos-first-turn-sfx.md) detects sustained,
+high-RMS clipped output from the old `sound.dll` software effects ring,
+fading that ring out to prevent harsh repeated noise. **Music remains
+enabled and is not modified by this guard**; ordinary effects continue
+when input audio is healthy. Effects automatically resume after a
+sustained quiet signal. This is a tested fail-safe, not a complete repair
+of the underlying game sound-mixing algorithm.
+
+Configuration and diagnostic environment switches are cached before
+SDL starts the audio callback, avoiding blocking operations during
+normal realtime audio mixing. Use `CIV3_SFX_GUARD_LOG=1` for opt-in
+diagnostic logs with a silent audio driver; never enable
+`CIV3_DISABLE_SFX_GUARD=1` at high volume because it bypasses the
+safety guard.
