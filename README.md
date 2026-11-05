@@ -1,5 +1,11 @@
 # Civilization III: Conquests — Static Recompilation
 
+GitHub Actions workflows are disabled in this repository to preserve the
+owner's quota. Their source permits manual dispatch only; pushes, pull requests
+and release tags do not start hosted jobs. Run verification locally with
+`ctest --test-dir build-macos --output-on-failure` and
+`python3 -m unittest discover -s tests -p 'test_macos*.py'`.
+
 > **Apple Silicon file-mapping safety:** save/asset views are now tracked
 > beyond the old 64-slot limit, with safe release, offset/size and
 > read-only access checks. A private WWII in the Pacific test reached

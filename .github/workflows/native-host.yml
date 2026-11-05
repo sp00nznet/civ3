@@ -1,9 +1,7 @@
 name: native macOS checks
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Run locally by default; hosted checks consume the owner's quota.
   workflow_dispatch:
 
 permissions:

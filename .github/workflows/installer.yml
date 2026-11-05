@@ -1,12 +1,8 @@
 # The installer for this commit, for Windows and Linux (recomp-launcher with
-# launcher/launcher.json): artifacts on every push to main, release files on
-# a v* tag.
+# launcher/launcher.json). Manual runs only to preserve the owner's quota.
 name: installer
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
