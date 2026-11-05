@@ -11,12 +11,11 @@ and release tags do not start hosted jobs. Run verification locally with
 > read-only access checks. A private WWII in the Pacific test reached
 > January 1942; see [file-mapping and AI-turn evidence](docs/macos-file-mapping-safety.md).
 >
-> **Apple Silicon audio remains under investigation:** WinMM now skips overdue
-> timer callbacks and DirectSound plays PCM committed at Unlock, with regression
-> tests for both paths. Full-volume gameplay still triggers the distortion
-> safeguard, so the existing WAV gain mitigation remains enabled.
-> [Timer/buffer findings](docs/macos-audio-timers.md) and
-> [volume mitigation and limitations](docs/macos-gameplay-wav-gain.md).
+> **Apple Silicon PCM buffer repair:** the native host now keeps WAV headers
+> out of the effects mixer and preserves unread bytes during stream loading.
+> Normal input and output volume are restored. Digital capture checks pass;
+> audible quality still needs user confirmation.
+> [PCM buffer findings and verification](docs/macos-mmio-sound.md).
 >
 > **MP3 decoder hardening:** a bounds violation in the guest audio fetch
 > callback is now rejected, and FFmpeg stream allocation/cleanup is safer.

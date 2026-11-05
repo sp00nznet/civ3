@@ -21,7 +21,7 @@
 + * callback. getenv and fprintf can block: neither runs in normal audio mixing. */
 +static pthread_once_t g_sfx_guard_cfg_once = PTHREAD_ONCE_INIT;
 +static int g_sfx_guard_disabled, g_sfx_guard_log;
-+static float g_sfx_output_gain = 3.0f;
++static float g_sfx_output_gain = 1.0f;
 +static void configure_sfx_guard(void) {
 +    const char *disable = getenv("CIV3_DISABLE_SFX_GUARD");
 +    const char *diagnostics = getenv("CIV3_SFX_GUARD_LOG");

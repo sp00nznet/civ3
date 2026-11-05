@@ -93,6 +93,14 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-winmm-timer-schedule.patch")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/winmm.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-mmio-buffer.patch"
+                        RESULT_VARIABLE MMIO_BUFFER_RESULT)
+        if(NOT MMIO_BUFFER_RESULT EQUAL 0)
+          message(FATAL_ERROR "WinMM read-buffer patch failed; use pinned pcrecomp runtime")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-mmio-buffer.patch")
       endif()
       if(PATCH_SOURCE STREQUAL "dsound.c")
         execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/dsound.c"
@@ -229,6 +237,21 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     include("${CULTURE_OVERLAY}/sources.cmake")
   endif()
   if(NOT CIV3_RUNTIME_TESTS_ONLY)
+    if(APPLE)
+      find_package(Python3 REQUIRED COMPONENTS Interpreter)
+      set(SOUND_OVERLAY "${CMAKE_CURRENT_BINARY_DIR}/sound-overlay")
+      set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${DLL_SOURCES}
+                   "${CMAKE_SOURCE_DIR}/work/sound.dll"
+                   "${CMAKE_SOURCE_DIR}/tools/macos_sound_overlay.py")
+      execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/macos_sound_overlay.py"
+                      --source "${CMAKE_SOURCE_DIR}/src/recomp/gen_sound" --output "${SOUND_OVERLAY}"
+                      --image "${CMAKE_SOURCE_DIR}/work/sound.dll"
+                      RESULT_VARIABLE SOUND_RESULT)
+      if(NOT SOUND_RESULT EQUAL 0)
+        message(FATAL_ERROR "Sound stream overlay failed; use the supported full sound lift")
+      endif()
+      include("${SOUND_OVERLAY}/sources.cmake")
+    endif()
     add_executable(civ3 src/linux/main.c src/linux/framebuffer.c src/linux/record_pipe.c src/linux/game_lock.c src/linux/script.c src/linux/dispatch.c ${HLE_SOURCES} ${GEN_SOURCES} ${DLL_SOURCES})
     target_include_directories(civ3 PRIVATE src/linux ${HLE} ${PCRECOMP}/runtime/recomp32)
     # 64-bit file offsets: a 32-bit stat fails with EOVERFLOW on a disk with
@@ -240,7 +263,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
       endif()
       # Guest addresses remain 32-bit offsets; do not truncate native pointers.
       target_compile_definitions(civ3 PRIVATE RECOMP_MEM_BASE=0x100000000000ull
-                                 CIV3_WAV_INPUT_DIVISOR=20)
+                                 CIV3_WAV_INPUT_DIVISOR=1)
     else()
       target_compile_definitions(civ3 PRIVATE RECOMP_FLAT_MEMORY)
     endif()

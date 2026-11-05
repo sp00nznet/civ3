@@ -1,5 +1,9 @@
 # Apple Silicon audio: timer deadlines and committed PCM
 
+The timer and buffer-snapshot changes remain in use. The full-volume failure
+described below was subsequently traced to
+[WAV headers entering the PCM mixer](macos-mmio-sound.md).
+
 The user continued to hear broken gameplay audio after the WAV gain mitigation.
 The following changes repair two compatibility-layer defects. They do not
 establish that the audible problem is resolved.

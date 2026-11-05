@@ -1,5 +1,9 @@
 # Apple Silicon: preserving gameplay sound without the first-turn noise
 
+Historical mitigation. The default now uses normal input and output gain
+after the [PCM buffer repair](macos-mmio-sound.md). The measurements below
+describe earlier builds.
+
 This documents the **revised** audio mitigation for the native Civilization III
 port. The previous first-turn SFX guard removed the harsh noise by muting the
 software-mixed effects buffer, but that also muted music carried by the same
