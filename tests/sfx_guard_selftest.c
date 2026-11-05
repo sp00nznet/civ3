@@ -43,7 +43,7 @@ int main(void) {
         if (civ3_sfx_guard_step(&state, 0.82f, 0.26f, 1024, 44100) > 0) triggered++;
     }
     check("sustained clipping triggers exactly once", triggered == 1);
-    check("sustained clipping is suppressed", state.muted && state.gain == 0.0f);
+    check("sustained clipping remains quiet but not fully muted", state.muted && state.gain >= 0.14f && state.gain <= 0.16f);
 
     /* Intermittent moderately loud noise should not repeatedly toggle state. */
     for (int i = 0; i < 90; ++i) step(&state, 0.36f, 0.01f, 1024);
@@ -61,6 +61,6 @@ int main(void) {
     check("zero frames ignored", civ3_sfx_guard_step(&state, 0.8f, 0.8f, 0, 44100) == 0);
     check("invalid updates leave state intact", state.gain == copy.gain && state.muted == copy.muted);
 
-    if (!errors) puts("PASS: sustained software SFX distortion suppressed, music unaffected by guard state, automatic recovery");
+    if (!errors) puts("PASS: sustained effects distortion attenuated without total silence; quiet samples and automatic recovery retained");
     return errors ? 1 : 0;
 }

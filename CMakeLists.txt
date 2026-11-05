@@ -53,7 +53,8 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
                                 "gdidc.c|pcrecomp-gdi-performance.patch"
                                 "host_lite.c|pcrecomp-machine-snapshot.patch"
                                 "gdi32.c|pcrecomp-bitmap-allocation.patch"
-                                "dsound.c|pcrecomp-dsound-lifetime.patch")
+                                "dsound.c|pcrecomp-dsound-lifetime.patch"
+                                "winmm.c|pcrecomp-wav-input-gain.patch")
       string(REPLACE "|" ";" PATCH_FIELDS "${PATCH_SPEC}")
       list(GET PATCH_FIELDS 0 PATCH_SOURCE)
       list(GET PATCH_FIELDS 1 PATCH_FILE)
@@ -82,6 +83,12 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-mss-bounds.patch")
+      endif()
+      if(PATCH_SOURCE STREQUAL "winmm.c")
+        # Only the full native Civilization III game gets WAV prescaling.
+        # Source-only HLE fixtures retain unmodified WinMM byte semantics.
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-wav-input-gain.patch")
       endif()
       if(PATCH_SOURCE STREQUAL "dsound.c")
         execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/dsound.c"
@@ -187,7 +194,7 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
   endif()
   if(APPLE)
     set_source_files_properties("${MACOS_HLE_DIR}/gdidc.c" "${MACOS_HLE_DIR}/gdi32.c"
-                                "${MACOS_HLE_DIR}/dsound.c"
+                                "${MACOS_HLE_DIR}/dsound.c" "${MACOS_HLE_DIR}/winmm.c"
                                 PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/src/linux")
     # Optimize only the profiled pixel-transfer layer; the lifted game and
     # thread scheduler retain their previously tested compiler settings.
@@ -220,7 +227,8 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         message(FATAL_ERROR "pcrecomp is too old: macOS needs the based guest-memory runtime")
       endif()
       # Guest addresses remain 32-bit offsets; do not truncate native pointers.
-      target_compile_definitions(civ3 PRIVATE RECOMP_MEM_BASE=0x100000000000ull)
+      target_compile_definitions(civ3 PRIVATE RECOMP_MEM_BASE=0x100000000000ull
+                                 CIV3_WAV_INPUT_DIVISOR=20)
     else()
       target_compile_definitions(civ3 PRIVATE RECOMP_FLAT_MEMORY)
     endif()

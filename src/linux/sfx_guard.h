@@ -1,6 +1,7 @@
-/* Mac native host: suppress sustained corrupted software-mixed effects audio.
- * Only applied to the legacy LO C SOFTWARE effects buffer. Music is separate.
- * This is a conservative fail-safe, not a repair of the guest mixer algorithm.
+/* Mac native host: attenuate sustained corrupted software-mixed audio.
+ * Applies only to the legacy software-effects ring. Unlike the MP3 stream,
+ * some in-game WAV music shares this ring, so NEVER fade it all the way to
+ * silence. This is a fail-safe, not a repair of guest mixing arithmetic.
  *
  * No I/O, allocation or blocking: safe inside SDL's realtime audio callback.
  */
@@ -55,7 +56,10 @@ static inline int civ3_sfx_guard_step(civ3_sfx_guard *s, float rms,
      * The guard does not change guest bytes or underlying cursor timing. */
     const float increment = (float)ms / (s->muted ? 100.0f : 200.0f);
     if (s->muted) {
-        s->gain = s->gain > increment ? s->gain - increment : 0.0f;
+        /* Retain a low-volume path for music carried by the same legacy
+         * SFX ring. Total mute also mutes gameplay music for Civ3. */
+        const float floor = 0.15f;
+        s->gain = s->gain > floor + increment ? s->gain - increment : floor;
     } else {
         s->gain = s->gain + increment < 1.0f ? s->gain + increment : 1.0f;
     }

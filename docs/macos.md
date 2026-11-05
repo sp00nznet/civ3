@@ -299,19 +299,22 @@ one bounded sample, **not a guarantee** that every longer campaign is
 leak-free or faster.
 
 
-## First-turn repeating sound safeguard
+## First-turn gameplay sound mitigation
 
-A [Mac-only safety guard](macos-first-turn-sfx.md) detects sustained,
-high-RMS clipped output from the old `sound.dll` software effects ring,
-fading that ring out to prevent harsh repeated noise. **Music remains
-enabled and is not modified by this guard**; ordinary effects continue
-when input audio is healthy. Effects automatically resume after a
-sustained quiet signal. This is a tested fail-safe, not a complete repair
-of the underlying game sound-mixing algorithm.
+The original [first-turn sound guard](macos-first-turn-sfx.md) prevented loud
+repeated noise by silencing the whole SFX channel. Unfortunately, the game
+also puts some in-game WAV music in that channel, so the first safeguard
+left gameplay silent.
 
-Configuration and diagnostic environment switches are cached before
-SDL starts the audio callback, avoiding blocking operations during
-normal realtime audio mixing. Use `CIV3_SFX_GUARD_LOG=1` for opt-in
-diagnostic logs with a silent audio driver; never enable
-`CIV3_DISABLE_SFX_GUARD=1` at high volume because it bypasses the
-safety guard.
+The [revised audio path](macos-gameplay-wav-gain.md) scales valid PCM WAV
+samples in memory *before* the legacy software mixer combines them. A
+partial 3× effects output boost restores some volume, while the original
+MP3 menu/music buffer stays separate. The emergency clipped-audio guard
+now retains a low 15% output floor rather than imposing complete silence.
+
+The source game files and saves are not changed. The Mac-only RIFF parser
+has passed 50,000 malformed-input cases under sanitizers. A first-turn
+test and a 195-second mid-campaign test produced no audio-suppression event
+on the latest build. The game should still be tested audibly at low volume:
+these tests used a dummy audio device, so they cannot confirm subjective
+speaker quality.

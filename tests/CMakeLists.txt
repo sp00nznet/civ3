@@ -78,3 +78,19 @@ if(APPLE)
   add_test(NAME macos_sfx_runaway_guard COMMAND civ3_sfx_guard_test)
   set_tests_properties(macos_sfx_runaway_guard PROPERTIES TIMEOUT 5)
 endif()
+
+# MAC: source-only RIFF/PCM gain validation, fuzzed malformed inputs.
+if(APPLE)
+  add_executable(civ3_wav_pcm_gain_test wav_pcm_gain_selftest.c)
+  target_include_directories(civ3_wav_pcm_gain_test PRIVATE ../src/linux)
+  add_test(NAME macos_wav_pcm_gain COMMAND civ3_wav_pcm_gain_test)
+  set_tests_properties(macos_wav_pcm_gain PROPERTIES TIMEOUT 10)
+endif()
+
+# Native SFX peak limiting, preserving quiet samples.
+if(APPLE)
+  add_executable(civ3_sfx_softlimit_test sfx_softlimit_selftest.c)
+  target_include_directories(civ3_sfx_softlimit_test PRIVATE ../src/linux)
+  add_test(NAME macos_sfx_softlimit COMMAND civ3_sfx_softlimit_test)
+  set_tests_properties(macos_sfx_softlimit PROPERTIES TIMEOUT 10)
+endif()

@@ -1,5 +1,11 @@
 # Apple Silicon — first-turn repeating-noise protection
 
+> **Superseded as the primary fix.** The first safeguard prevented a harsh
+> repeating noise by muting a whole software-mixed effects channel, but
+> that also silenced music carried through that channel during gameplay.
+> The [updated in-memory WAV gain mitigation](macos-gameplay-wav-gain.md)
+> keeps the effects channel active and only uses the guard as a last resort.
+
 Status: **Mitigation verified on the synthetic-output and actual-game paths**,
 not yet proof that the underlying lifted `sound.dll` mixer bug is eliminated.
 Tested on macOS / Apple Silicon, November 4, 2026.
@@ -46,9 +52,9 @@ DirectSound software effects buffer, backed by `src/linux/sfx_guard.h`.
   and at least 32 KiB of storage.
 - Short sound effects and low-level/silent audio pass unchanged.
 - Persistent high-RMS, clipped effects PCM for about 750 ms triggers a
-  ~100 ms fade-out of that buffer. Only the affected software SFX stream
-  is suppressed; game timing, position counters, and source audio bytes
-  are unchanged.
+  ~100 ms fade-down of that buffer. The updated guard retains a 15%
+  effects output floor rather than muting the channel completely.
+  Game timing, position counters and source audio bytes are unchanged.
 - Once the input remains quiet for about 2.7 seconds, it automatically
   fades the effects buffer back in over ~200 ms.
 - The guard's configuration is read **once before starting SDL audio**.
@@ -62,8 +68,10 @@ DirectSound software effects buffer, backed by `src/linux/sfx_guard.h`.
 
 This is a bounded **audible-failure protection**, not a precise correction
 to the original mixer. While a distorted waveform persists, some ordinary
-game sound effects may also be inaudible. The soundtrack and game itself
-remain enabled.
+game sound effects may also be inaudible. Main-menu MP3 music is not controlled by the guard, but some
+in-game music uses this same effects channel. Therefore the first version
+could produce complete gameplay silence. The revised in-memory WAV gain
+correction is the default path, and this guard is now a fallback.
 
 ## Verification
 
