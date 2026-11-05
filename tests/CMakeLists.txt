@@ -119,3 +119,10 @@ if(APPLE)
   set_tests_properties(macos_winmm_timer PROPERTIES TIMEOUT 10
     ENVIRONMENT "SDL_AUDIODRIVER=dummy;SDL_VIDEODRIVER=dummy")
 endif()
+
+if(APPLE)
+  add_executable(civ3_mmio_buffer_test mmio_buffer_selftest.c)
+  target_link_libraries(civ3_mmio_buffer_test PRIVATE civ3_fixture_hle)
+  add_test(NAME macos_mmio_buffer COMMAND civ3_mmio_buffer_test)
+  set_tests_properties(macos_mmio_buffer PROPERTIES TIMEOUT 10)
+endif()
