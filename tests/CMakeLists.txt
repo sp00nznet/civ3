@@ -54,6 +54,14 @@ target_link_libraries(civ3_dispatch_cache_test PRIVATE civ3_fixture_hle)
 add_test(NAME macos_dispatch_cache COMMAND civ3_dispatch_cache_test)
 set_tests_properties(macos_dispatch_cache PROPERTIES TIMEOUT 30)
 
+# Host file mapping table: 64-view exhaustion, bounds and cleanup.
+if(APPLE)
+  add_executable(civ3_mapping_safety_test mapping_safety_selftest.c)
+  target_link_libraries(civ3_mapping_safety_test PRIVATE civ3_fixture_hle)
+  add_test(NAME macos_mapping_safety COMMAND civ3_mapping_safety_test)
+  set_tests_properties(macos_mapping_safety PROPERTIES TIMEOUT 20)
+endif()
+
 # Sound COM ownership stress: no proprietary game data or audio device.
 if(APPLE)
   add_executable(civ3_dsound_lifetime_test dsound_lifetime_selftest.c)

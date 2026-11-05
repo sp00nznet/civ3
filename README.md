@@ -1,5 +1,10 @@
 # Civilization III: Conquests — Static Recompilation
 
+> **Apple Silicon file-mapping safety:** save/asset views are now tracked
+> beyond the old 64-slot limit, with safe release, offset/size and
+> read-only access checks. A private WWII in the Pacific test reached
+> January 1942; see [file-mapping and AI-turn evidence](docs/macos-file-mapping-safety.md).
+>
 > **MP3 decoder hardening:** a bounds violation in the guest audio fetch
 > callback is now rejected, and FFmpeg stream allocation/cleanup is safer.
 > A private 195-second Persian campaign progressed from turn 111 to 121 with

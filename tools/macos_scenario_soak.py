@@ -13,6 +13,7 @@ from macos_qa_cleanup import remove_clones
 from macos_assets import fresh_settings
 from macos_smoke import assess
 from macos_roundtrip import BAD,digest,turns
+from macos_rss import run_with_rss, summarize_rss, read_rss_kib
 ROOT=Path(__file__).resolve().parents[1]
 CASES={"mesopotamia":(0,"1 Mesopotamia.biq"),"rise-of-rome":(1,"2 Rise of Rome.biq"),
        "fall-of-rome":(2,"3 Fall of Rome.biq"),"middle-ages":(3,"4 Middle Ages.biq"),
@@ -27,6 +28,8 @@ ap.add_argument("case",choices=CASES)
 ap.add_argument("--output",type=Path,required=True)
 ap.add_argument("--play",type=int,default=140)
 ap.add_argument("--interval",type=int,default=1200)
+ap.add_argument("--rss-sample",action="store_true",
+                help="Sample the isolated game process's resident memory during AI turns")
 a=ap.parse_args()
 source=(ROOT/"game").resolve()
 target=a.output.resolve()
@@ -53,13 +56,20 @@ try:
         "--click",f"200,{127+30*index}@20","--click","972,744@24",
         "--click","969,740@40",
         "--autopilot",f"{a.interval}@90"]
-    with (target/"run.log").open("w") as stream:
-        env=dict(os.environ,HLE_FILETRACE="1")
-        process=subprocess.run(commands,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT,
-                               timeout=a.play+120,env=env)
+    env=dict(os.environ,HLE_FILETRACE="1")
+    if a.rss_sample:
+        code,samples=run_with_rss(commands, ROOT, target/"run.log", a.play+120,
+                                  env=env)
+        run_result["memory"]=summarize_rss(samples)
+        (target/"rss-samples.json").write_text(json.dumps(samples,indent=2)+"\n")
+    else:
+        with (target/"run.log").open("w") as stream:
+            process=subprocess.run(commands,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT,
+                                   timeout=a.play+120,env=env)
+        code=process.returncode
     log=(target/"run.log").read_text(errors="replace")
     screenshots=target/"final.ppm"
-    failures=assess(process.returncode,log,screenshots)
+    failures=assess(code,log,screenshots)
     failures += [f"runtime error: {m}" for m in BAD if m in log]
     # Every scenario menu launch must be separately verified; no false pass on
     # simply showing the menu. Require a turn and a fresh autosave.
@@ -71,7 +81,7 @@ try:
     scenario_recorded=biq.lower() in log.lower()
     if not scenario_recorded:failures.append("scenario BIQ was not explicitly observed opening")
     if source_hash!=digest(source_ini):failures.append("original source preferences were modified")
-    run_result.update(result="pass" if not failures else "fail",code=process.returncode,turn=final,
+    run_result.update(result="pass" if not failures else "fail",code=code,turn=final,
         scenario_file_observed=scenario_recorded,autosaves=[p.name for p in autos],
         failures=failures,log="run.log",screenshot="final.ppm")
     print(json.dumps(run_result,indent=2),flush=True)

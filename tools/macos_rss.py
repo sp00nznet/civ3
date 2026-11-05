@@ -26,13 +26,14 @@ def read_rss_kib(pid: int) -> int | None:
 
 def run_with_rss(command: list[str], cwd: Path, log: Path,
                  timeout: float, sample_interval: float = 2.5,
-                 measure: Callable[[int], int | None] = read_rss_kib
+                 measure: Callable[[int], int | None] = read_rss_kib,
+                 env: dict[str, str] | None = None
                  ) -> tuple[int, list[dict[str, float | int]]]:
     if not command or timeout <= 0 or sample_interval <= 0:
         raise ValueError("Command and positive time bounds required")
     samples: list[dict[str, float | int]] = []
     with log.open("x") as sink:
-        child = subprocess.Popen(command, cwd=cwd, stdout=sink,
+        child = subprocess.Popen(command, cwd=cwd, env=env, stdout=sink,
                                  stderr=subprocess.STDOUT)
         start = time.monotonic()
         try:

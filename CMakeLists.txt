@@ -90,6 +90,14 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         if(NOT SHARING_PATCH_RESULT EQUAL 0)
           message(FATAL_ERROR "File-sharing patch failed; use the pinned pcrecomp revision")
         endif()
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/kernel32_ext.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-mapping-lifetime.patch"
+                        RESULT_VARIABLE MAPPING_LIFETIME_RESULT)
+        if(NOT MAPPING_LIFETIME_RESULT EQUAL 0)
+          message(FATAL_ERROR "Guest file-view tracking patch failed; use pinned pcrecomp runtime")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-mapping-lifetime.patch")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-file-sharing.patch")
       endif()

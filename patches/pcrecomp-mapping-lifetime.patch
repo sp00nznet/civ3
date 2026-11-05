@@ -1,0 +1,137 @@
+--- kernel32_ext.c
++++ kernel32_ext.c
+@@ -20,6 +20,8 @@
+ #include <sys/stat.h>
+ #include <sys/statvfs.h>
+ #include <sys/mman.h>
++#include <pthread.h>
++#include <limits.h>
+ #include "win32hle.h"
+ 
+ #ifdef __APPLE__                 /* struct stat's times by their BSD names */
+@@ -903,31 +905,79 @@
+         if (f < 0 || fstat(f, &st) != 0) { hle_set_last_error(6); RET(0, 6); }   /* ERROR_INVALID_HANDLE */
+         if (!size) size = (uint64_t)st.st_size;
+         fd = dup(f);
++        if (fd < 0) { hle_set_last_error(errno_to_win(errno)); RET(0, 6); }
+     }
+     if (!size) { hle_set_last_error(1006); RET(0, 6); }    /* ERROR_FILE_INVALID: an empty file */
+     hmapping *m = (hmapping *)malloc(sizeof *m);
++    if (!m) {
++        if (fd >= 0) close(fd);
++        hle_set_last_error(8); RET(0, 6);
++    }
+     m->fd = fd, m->size = size, m->writable = (protect & 0x0C) != 0;   /* PAGE_READWRITE | PAGE_WRITECOPY */
+     uint32_t h = hle_handle_alloc(HLE_H_MAPPING, m);
+     if (!h) { mapping_closer(m); RET(0, 6); }
+     hle_set_last_error(0);
+     RET(h, 6);
+ }
+-#define MAX_VIEWS 64
+-static struct { uint32_t addr, len; } g_views[MAX_VIEWS];
++/* Views may survive a file HANDLE close. Keep a dynamically sized table:
++ * reserving a 65th view without a slot formerly leaked inaccessible guest
++ * mappings. A separate mutex keeps map/unmap atomic for host audio workers
++ * that can call guest Win32 APIs from another native thread. */
++typedef struct { uint32_t addr, len; } map_view_t;
++static map_view_t *g_views;
++static size_t g_views_capacity;
++static pthread_mutex_t g_views_mutex = PTHREAD_MUTEX_INITIALIZER;
++#define MAX_TRACKED_VIEWS 4096u
++
++static int allocate_view_slot_locked(void) {
++    for (size_t i = 0; i < g_views_capacity; i++)
++        if (!g_views[i].addr) return (int)i;
++    if (g_views_capacity >= MAX_TRACKED_VIEWS) return -1;
++    size_t next = g_views_capacity ? g_views_capacity * 2 : 64;
++    if (next > MAX_TRACKED_VIEWS) next = MAX_TRACKED_VIEWS;
++    map_view_t *new_views = (map_view_t *)realloc(g_views, next * sizeof *g_views);
++    if (!new_views) return -1;
++    memset(new_views + g_views_capacity, 0,
++           (next - g_views_capacity) * sizeof *new_views);
++    int index = (int)g_views_capacity;
++    g_views = new_views;
++    g_views_capacity = next;
++    return index;
++}
+ static void k_MapViewOfFile(void) {                      /* (hMap, access, offHigh, offLow, bytes) */
+     hmapping *m = (hmapping *)hle_handle_obj(A32(0), HLE_H_MAPPING);
+     uint64_t off = (uint64_t)A32(2) << 32 | A32(3);
+-    if (!m || off >= m->size) { hle_set_last_error(6); RET(0, 5); }
+-    uint64_t len = A32(4) ? A32(4) : m->size - off;
+-    int copy = A32(1) == 1;                                /* FILE_MAP_COPY */
++    if (!m) { hle_set_last_error(6); RET(0, 5); }
++    uint64_t len = A32(4) ? A32(4) : (off < m->size ? m->size - off : 0);
++    /* Both the guest virtual address and its tracked length are 32-bit.
++     * Check bounds BEFORE truncation, reservation or mmap(MAP_FIXED):
++     * otherwise mapping >4GB could overwrite unrelated guest pages. */
++    if (!len || len > UINT32_MAX || off >= m->size || len > m->size - off ||
++        off > INT64_MAX) {
++        hle_set_last_error(87); RET(0, 5);             /* ERROR_INVALID_PARAMETER */
++    }
++    if (m->fd >= 0 && (off % (uint64_t)sysconf(_SC_PAGESIZE)) != 0) {
++        hle_set_last_error(87); RET(0, 5);
++    }
++    /* A FILE_MAP_WRITE request against PAGE_READONLY must fail here.
++     * Returning a read-only view would instead fault when the game writes. */
++    if ((A32(1) & 2u) && !m->writable) {
++        hle_set_last_error(5); RET(0, 5); /* ERROR_ACCESS_DENIED */
++    }
++    int copy = A32(1) == 1;                            /* FILE_MAP_COPY */
+     int prot = PROT_READ | (m->writable || copy ? PROT_WRITE : 0);
+-    /* the view lives in guest memory: reserve it there, then put the file over
+-     * it (a pagefile mapping is the reservation's own zeroed pages) */
++    pthread_mutex_lock(&g_views_mutex);
++    int slot = allocate_view_slot_locked();
++    if (slot < 0) {
++        pthread_mutex_unlock(&g_views_mutex);
++        hle_set_last_error(8); RET(0, 5);             /* ERROR_NOT_ENOUGH_MEMORY */
++    }
+     uint32_t va = hle_vm_reserve(0, (uint32_t)len);
+-    if (!va) { hle_set_last_error(8); RET(0, 5); }       /* ERROR_NOT_ENOUGH_MEMORY */
++    if (!va) {
++        pthread_mutex_unlock(&g_views_mutex);
++        hle_set_last_error(8); RET(0, 5);
++    }
+ #ifdef __EMSCRIPTEN__
+-    /* no mmap of a file at an address: the view is a copy (writes to it do
+-     * not reach the file) */
+     (void)prot;
+     for (size_t done = 0; m->fd >= 0 && done < len;) {
+         ssize_t r = pread(m->fd, (uint8_t *)hle_ptr(va) + done, len - done, (off_t)(off + done));
+@@ -935,19 +985,29 @@
+         done += (size_t)r;
+     }
+ #else
+-    if (m->fd >= 0 && mmap(hle_ptr(va), len, prot, MAP_FIXED | (copy ? MAP_PRIVATE : MAP_SHARED), m->fd, (off_t)off) == MAP_FAILED) {
+-        hle_vm_release(va, (uint32_t)len); hle_set_last_error(8); RET(0, 5);
++    if (m->fd >= 0 && mmap(hle_ptr(va), (size_t)len, prot, MAP_FIXED |
++                          (copy ? MAP_PRIVATE : MAP_SHARED), m->fd, (off_t)off) == MAP_FAILED) {
++        hle_vm_release(va, (uint32_t)len);
++        pthread_mutex_unlock(&g_views_mutex);
++        hle_set_last_error(8); RET(0, 5);
+     }
+ #endif
+-    for (int i = 0; i < MAX_VIEWS; i++) if (!g_views[i].addr) { g_views[i].addr = va, g_views[i].len = (uint32_t)len; break; }
++    g_views[slot].addr = va, g_views[slot].len = (uint32_t)len;
++    pthread_mutex_unlock(&g_views_mutex);
++    hle_set_last_error(0);
+     RET(va, 5);
+ }
+ static void k_UnmapViewOfFile(void) {
+-    for (int i = 0; i < MAX_VIEWS; i++)
+-        if (g_views[i].addr && g_views[i].addr == A32(0)) {
++    uint32_t addr = A32(0);
++    pthread_mutex_lock(&g_views_mutex);
++    for (size_t i = 0; i < g_views_capacity; i++) {
++        if (g_views[i].addr && g_views[i].addr == addr) {
+             hle_vm_release(g_views[i].addr, g_views[i].len);
+-            g_views[i].addr = 0;
++            g_views[i].addr = 0, g_views[i].len = 0;
++            pthread_mutex_unlock(&g_views_mutex);
+             RET(1, 1);
+         }
++    }
++    pthread_mutex_unlock(&g_views_mutex);
+     RET(0, 1);
+ }

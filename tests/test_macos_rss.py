@@ -1,6 +1,7 @@
 """Memory-sampling safety tests with synthetic child processes only."""
 from pathlib import Path
 import subprocess
+import os
 import sys
 import tempfile
 import unittest
@@ -24,6 +25,17 @@ class RssMonitorTests(unittest.TestCase):
         self.assertGreaterEqual(len(samples), 2, samples)
         self.assertGreater(max(int(s["rss_kib"]) for s in samples), 0)
         self.assertEqual(summarize_rss(samples)["sample_count"], len(samples))
+
+    def test_passes_explicit_child_environment_for_scenario_tracing(self):
+        env = dict(os.environ, CIV3_SYNTHETIC_TRACE_FLAG="expected")
+        code, samples = run_with_rss(
+            [sys.executable, "-c",
+             "import os; print(os.environ['CIV3_SYNTHETIC_TRACE_FLAG'])"],
+            self.root, self.root / "env.log", timeout=4,
+            sample_interval=.04, env=env)
+        self.assertEqual(code, 0)
+        self.assertEqual((self.root / "env.log").read_text().strip(), "expected")
+        self.assertIsInstance(samples, list)
 
     def test_timeout_stops_only_its_own_child(self):
         script = "import time; time.sleep(20)"

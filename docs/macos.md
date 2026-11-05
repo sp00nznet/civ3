@@ -275,3 +275,25 @@ final framebuffer from an isolated game copy. RSS can grow legitimately
 due to game data and mapped caches; do not treat RSS growth alone as a
 memory leak. The 195-second Persian test and limitations are in the linked
 report.
+
+
+## Mapped-file lifetime and large-scenario RSS
+
+The Apple Silicon KERNEL32 overlay now protects
+[save-file mapping lifetime and bounds](macos-file-mapping-safety.md).
+Earlier builds returned a 65th mapped view without recording it, leaking
+the virtual memory reservation. The new table safely grows to a bounded
+capacity, records every successful mapping, rejects invalid offsets,
+4 GiB length truncation and write views against read-only mappings, and
+synchronizes unmapping.
+
+The source-only regression exercises concurrent live view counts above
+64, repeated map/unmap cycles and invalid file-view permissions without
+using game assets.
+
+`tools/macos_scenario_soak.py` now supports `--rss-sample` for
+Apple Silicon single-player Conquests. The first isolated 190-second WWII
+test on the repaired mapping host completed the first AI turn and generated
+a January 1942 autosave. RSS profiling showed no runaway growth in that
+one bounded sample, **not a guarantee** that every longer campaign is
+leak-free or faster.
