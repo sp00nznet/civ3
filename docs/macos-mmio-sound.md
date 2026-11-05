@@ -75,7 +75,7 @@ python3 -m unittest discover -s tests -p 'test_macos*.py'
 
 GitHub hosted workflows remain disabled to preserve the owner's quota.
 
-The diagnostic also found that the legacy software API uses a 22.05 kHz
-pitch baseline for 44.1 kHz input. A pitch-zero call retains that baseline.
-The host output rate has not been changed to compensate. This behavior needs
-separate investigation against the game's intended pitch setup.
+The later [WAV rate repair](macos-wav-rate.md) converts higher-rate inputs in
+guest memory to the actual effects ring rate. This corrects the legacy API's
+half-rate interpretation without changing the physical output rate or
+intentional pitch settings.

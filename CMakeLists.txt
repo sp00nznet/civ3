@@ -101,6 +101,14 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-mmio-buffer.patch")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/winmm.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-wav-rate.patch"
+                        RESULT_VARIABLE WAV_RATE_RESULT)
+        if(NOT WAV_RATE_RESULT EQUAL 0)
+          message(FATAL_ERROR "WinMM WAV rate patch failed; use pinned pcrecomp runtime")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-wav-rate.patch")
       endif()
       if(PATCH_SOURCE STREQUAL "dsound.c")
         execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/dsound.c"
@@ -119,6 +127,14 @@ if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                      "${CMAKE_SOURCE_DIR}/patches/pcrecomp-dsound-atomic-snapshot.patch")
+        execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/dsound.c"
+                        "${CMAKE_SOURCE_DIR}/patches/pcrecomp-dsound-mixer-rate.patch"
+                        RESULT_VARIABLE MIXER_RATE_RESULT)
+        if(NOT MIXER_RATE_RESULT EQUAL 0)
+          message(FATAL_ERROR "DirectSound mixer-rate patch failed; use pinned pcrecomp runtime")
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     "${CMAKE_SOURCE_DIR}/patches/pcrecomp-dsound-mixer-rate.patch")
       endif()
       if(PATCH_SOURCE STREQUAL "kernel32_ext.c")
         execute_process(COMMAND "${PATCH_EXECUTABLE}" -s "${MACOS_HLE_DIR}/staging/kernel32_ext.c"

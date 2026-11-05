@@ -14,6 +14,8 @@ and release tags do not start hosted jobs. Run verification locally with
 > **Apple Silicon PCM buffer repair:** the native host now keeps WAV headers
 > out of the effects mixer and preserves unread bytes during stream loading.
 > Resident stereo and 8-bit voices also retain their samples and mixing state.
+> Higher-rate WAVs are converted in memory to the effects mixer's working rate,
+> preserving their pitch and duration. [Sample-rate verification](docs/macos-wav-rate.md).
 > Normal input and output volume are restored. Digital capture checks pass;
 > audible quality still needs user confirmation.
 > [PCM buffer findings and verification](docs/macos-mmio-sound.md).
