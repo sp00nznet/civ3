@@ -75,3 +75,13 @@ src/recomp/gen_jgl/
 src/recomp/gen_sound/
 build-linux
 build-*/
+
+# Local macOS tooling and launchers (never publish game-derived code/data).
+.venv/
+build-macos*/
+Civilization III (recomp).command
+
+# Optional local toolkit / Finder bootstrap output
+.deps/
+
+dist/

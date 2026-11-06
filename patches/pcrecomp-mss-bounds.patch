@@ -1,0 +1,119 @@
+--- mss.c
++++ mss.c
+@@ -20,6 +20,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <strings.h>
++#include <limits.h>
+ #include "win32hle.h"
+ 
+ /* ---- files and memory ---- */
+@@ -83,6 +84,7 @@
+     int16_t *pcm;                                        /* decoded and not yet handed out */
+     int pcm_n, pcm_at, pcm_cap;
+     uint8_t *fetch_buf;                                  /* guest-visible: the callback writes into it */
++    int input_error;                                      /* a callback violated the requested byte count */
+ } asi_t;
+ 
+ /* S32 fetch(U32 user, void *dest, S32 bytes, S32 offset): offset -1 reads on. */
+@@ -90,12 +92,20 @@
+  * from its own buffer (Civilization III's sound.dll ran off its end). */
+ static int io_read(void *opaque, uint8_t *buf, int n) {
+     asi_t *s = (asi_t *)opaque;
++    if (n <= 0) return AVERROR_EOF;
+     if (n > 65536) n = 65536;
++    if (s->input_error) return AVERROR(EIO);
+     if (s->total && s->pos >= s->total) return AVERROR_EOF;
+     if (s->total && (uint32_t)n > s->total - s->pos) n = (int)(s->total - s->pos);
+     uint32_t a[4] = { s->user, hle_va(s->fetch_buf), (uint32_t)n, s->pos };
+     int got = (int)hle_call_guest(s->fetch, 4, a);
+     if (got <= 0) return AVERROR_EOF;
++    /* A guest can report more than requested. Never copy past our fixed
++     * 64 KiB scratch buffer or FFmpeg's smaller output buffer. */
++    if (got > n) {
++        s->input_error = 1;
++        return AVERROR(EIO);
++    }
+     memcpy(buf, s->fetch_buf, (size_t)got);
+     s->pos += (uint32_t)got;
+     return got;
+@@ -105,7 +115,7 @@
+     whence &= ~AVSEEK_FORCE;
+     if (whence == AVSEEK_SIZE) return s->total ? (int64_t)s->total : -1;
+     int64_t to = whence == SEEK_SET ? off : whence == SEEK_CUR ? s->pos + off : whence == SEEK_END && s->total ? s->total + off : -1;
+-    if (to < 0 || (s->total && to > s->total)) return -1;
++    if (to < 0 || to > UINT32_MAX || (s->total && to > s->total)) return -1;
+     s->pos = (uint32_t)to;
+     return to;
+ }
+@@ -138,7 +148,18 @@
+         if (r == 0) {
+             if (!s->swr && !setup_swr(s)) { s->eof = 1; break; }
+             int max = swr_get_out_samples(s->swr, s->frame->nb_samples), ch = out_channels(s);
+-            if (max * ch > s->pcm_cap) s->pcm_cap = max * ch, s->pcm = (int16_t *)realloc(s->pcm, (size_t)s->pcm_cap * 2);
++            if (max <= 0 || ch < 1 || ch > 2 ||
++                (uint64_t)(unsigned)max * (unsigned)ch > 16u * 1024u * 1024u) {
++                s->eof = 1; break;
++            }
++            int needed = max * ch;
++            if (needed > s->pcm_cap) {
++                /* Preserve the old PCM buffer if realloc fails. Never pass
++                 * a NULL output to swr_convert after allocation failure. */
++                int16_t *next = (int16_t *)realloc(s->pcm, (size_t)needed * sizeof(int16_t));
++                if (!next) { s->eof = 1; break; }
++                s->pcm = next, s->pcm_cap = needed;
++            }
+             uint8_t *o = (uint8_t *)s->pcm;
+             int n = swr_convert(s->swr, &o, max, (const uint8_t **)s->frame->extended_data, s->frame->nb_samples);
+             s->pcm_n = n > 0 ? n * ch : 0, s->pcm_at = 0;
+@@ -159,13 +180,30 @@
+     if (!s) RET(0, 3);
+     memset(s, 0, sizeof *s);
+     s->user = A32(0), s->fetch = A32(1), s->total = A32(2);
++    if (!s->fetch) { asi_free(s); RET(0, 3); }
+     s->fetch_buf = (uint8_t *)hle_alloc(65536);
+-    s->io = avio_alloc_context((uint8_t *)av_malloc(65536), 65536, 0, s, io_read, NULL, io_seek);
++    uint8_t *io_buffer = (uint8_t *)av_malloc(65536);
++    if (!s->fetch_buf || !io_buffer) {
++        av_free(io_buffer);
++        asi_free(s);
++        RET(0, 3);
++    }
++    s->io = avio_alloc_context(io_buffer, 65536, 0, s, io_read, NULL, io_seek);
++    if (!s->io) {
++        av_free(io_buffer);
++        asi_free(s);
++        RET(0, 3);
++    }
+     s->fmt = avformat_alloc_context();
++    if (!s->fmt) { asi_free(s); RET(0, 3); }
+     s->fmt->pb = s->io;
+-    if (avformat_open_input(&s->fmt, NULL, av_find_input_format("mp3"), NULL) < 0 || avformat_find_stream_info(s->fmt, NULL) < 0) {
++    /* On failure avformat_open_input may release the format context and
++     * clear s->fmt. find_stream_info does not, so never force it to NULL:
++     * doing so leaked the format context on malformed/truncated MP3. */
++    int status = avformat_open_input(&s->fmt, NULL, av_find_input_format("mp3"), NULL);
++    if (status >= 0 && s->fmt) status = avformat_find_stream_info(s->fmt, NULL);
++    if (status < 0 || s->input_error) {
+         fprintf(stderr, "[mss] ASI_stream_open: not an MP3 stream\n");
+-        s->fmt = NULL;
+         asi_free(s);
+         RET(0, 3);
+     }
+@@ -179,13 +217,15 @@
+     }
+     s->rate = s->dec->sample_rate, s->channels = s->dec->ch_layout.nb_channels > 1 ? 2 : 1;
+     s->frame = av_frame_alloc(), s->pkt = av_packet_alloc();
++    if (!s->frame || !s->pkt) { asi_free(s); RET(0, 3); }
+     RETP(s, 3);
+ }
+ static void s_process(void) {                            /* (stream, buffer, bytes) -> bytes written */
+     asi_t *s = (asi_t *)APTR(0);
+     int16_t *out = (int16_t *)APTR(1);
+     int want = (int)A32(2) / 2, n = 0;
+-    while (s && n < want && refill(s)) {
++    if (!s || !out || !s->frame || !s->pkt) RET(0, 3);
++    while (n < want && refill(s)) {
+         int k = s->pcm_n - s->pcm_at < want - n ? s->pcm_n - s->pcm_at : want - n;
+         memcpy(out + n, s->pcm + s->pcm_at, (size_t)k * 2);
+         n += k, s->pcm_at += k;

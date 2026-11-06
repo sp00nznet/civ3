@@ -1,0 +1,51 @@
+--- mss.c
++++ mss.c
+@@ -25,7 +25,12 @@
+ /* ---- files and memory ---- */
+ static void a_startup(void) { RET(1, 0); }
+ static void a_shutdown(void) { RETV(0); }
+-static void a_set_redist_directory(void) { static char dir[260]; RETP(dir, 1); }   /* the previous one */
++static void a_set_redist_directory(void) {
++    /* The caller keeps this string: a host static has no guest address. */
++    static uint32_t dir;
++    if (!dir) dir = hle_guest_strdup("");
++    RET(dir, 1);
++}
+ static void a_mem_alloc_lock(void) { RETP(hle_alloc(A32(0)), 1); }
+ static void a_mem_free_lock(void) { hle_free(APTR(0)); RETV(1); }
+ static long whole_file(const char *name, void *dest, void **out) {   /* its size; read into dest or a new block */
+@@ -112,7 +117,7 @@
+     if (s->io) { av_freep(&s->io->buffer); avio_context_free(&s->io); }
+     av_frame_free(&s->frame);
+     av_packet_free(&s->pkt);
+-    free(s->pcm), hle_free(s->fetch_buf), free(s);
++    free(s->pcm), hle_free(s->fetch_buf), hle_free(s);
+ }
+ 
+ /* The output: what the caller requested, else the stream's own. */
+@@ -148,7 +153,11 @@
+ }
+ 
+ static void s_open(void) {                               /* (user, fetch_cb, total_size) -> stream */
+-    asi_t *s = (asi_t *)calloc(1, sizeof *s);
++    /* ASI handles round-trip through guest code and APTR, so allocate in
++     * guest memory even though the opaque struct holds native FFmpeg state. */
++    asi_t *s = (asi_t *)hle_alloc(sizeof *s);
++    if (!s) RET(0, 3);
++    memset(s, 0, sizeof *s);
+     s->user = A32(0), s->fetch = A32(1), s->total = A32(2);
+     s->fetch_buf = (uint8_t *)hle_alloc(65536);
+     s->io = avio_alloc_context((uint8_t *)av_malloc(65536), 65536, 0, s, io_read, NULL, io_seek);
+@@ -221,7 +230,11 @@
+     RET(prev, 3);
+ }
+ static void s_close(void) { if (A32(0)) asi_free((asi_t *)APTR(0)); RET(0, 1); }
+-static void s_error(void) { static char none[] = ""; RETP(none, 0); }
++static void s_error(void) {
++    static uint32_t none;
++    if (!none) none = hle_guest_strdup("");
++    RET(none, 0);
++}
+ 
+ static const win32hle_shim g_asi[] = {
+     { "mss:ASI_stream_open", s_open }, { "mss:ASI_stream_process", s_process }, { "mss:ASI_stream_seek", s_seek },

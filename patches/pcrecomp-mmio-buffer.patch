@@ -1,0 +1,190 @@
+--- winmm.c
++++ winmm.c
+@@ -151,19 +151,47 @@
+ static void m_mciGetErrorStringA(void) { RET(0, 3); }          /* FALSE: no string */
+ 
+ /* --- mmio: RIFF files (WAVs) for reading ---
+- * A file is read whole into memory at mmioOpenA, or a caller's buffer is
+- * used as it stands (FOURCC_MEM). The direct-buffer calls (mmioGetInfo,
+- * mmioAdvance, mmioSetInfo) then hand out that one buffer, which is the
+- * whole file, so an advance never has to refill it. Writing is not done:
+- * opening for write fails, as with a read-only disk. */
++ * The backing file is loaded into guest memory; FOURCC_MEM borrows the
++ * caller's storage. SetBuffer creates an independent direct-I/O window at
++ * the current file position. It must start at the sought PCM payload, not
++ * at the file's RIFF header. Writing to disk is not implemented. */
+ #define MMIOERR_CANNOTOPEN    257u
+ #define MMIOERR_CHUNKNOTFOUND 265u
+ #define FOURCC_MEM  0x204D454Du
+ #define FOURCC_RIFF 0x46464952u
+ #define FOURCC_LIST 0x5453494Cu
+-typedef struct { uint8_t *data; uint32_t len, pos; int owns; } hmmio;
++typedef struct {
++    uint8_t *data; uint32_t len, pos; int owns;
++    /* Logical position and disk refill position advance independently. */
++    uint8_t *io;
++    uint32_t capacity, window, valid, next, disk;
++    int io_set, io_owned;
++} hmmio;
+ static hmmio *MMIO(uint32_t h) { return (hmmio *)hle_handle_obj(h, HLE_H_MMIO); }
+-static void mmio_info(const hmmio *m, uint32_t info, uint32_t h) {   /* MMIOINFO over the whole file */
++static void mmio_position(hmmio *m, uint32_t pos) {
++    m->pos = pos;
++    if (!m->io_set) return;
++    if (m->capacity && pos >= m->window && pos-m->window <= m->valid) {
++        m->next = pos-m->window;
++    } else {
++        m->window = m->disk = pos;
++        m->valid = m->next = 0;
++    }
++}
++static void mmio_info(const hmmio *m, uint32_t info, uint32_t h) {
++    if (m->io_set) {
++        uint32_t base = m->io ? hle_va(m->io) : 0;
++        MEM32(info) = m->io_owned ? 0x10000u /* MMIO_ALLOCBUF */ : 0;
++        MEM32(info + 20) = m->capacity;
++        MEM32(info + 24) = base;
++        MEM32(info + 28) = base + m->next;
++        MEM32(info + 32) = base + m->valid;
++        MEM32(info + 36) = base + m->capacity;
++        MEM32(info + 40) = m->window;
++        MEM32(info + 44) = m->disk;
++        MEM32(info + 68) = h;
++        return;
++    }
+     MEM32(info + 20) = m->len, MEM32(info + 24) = hle_va(m->data);
+     MEM32(info + 28) = hle_va(m->data) + m->pos, MEM32(info + 32) = hle_va(m->data) + m->len;
+     MEM32(info + 36) = MEM32(info + 32), MEM32(info + 40) = 0, MEM32(info + 44) = m->len, MEM32(info + 68) = h;
+@@ -226,6 +254,7 @@
+ static void m_mmioClose(void) {
+     hmmio *m = MMIO(A32(0));
+     if (!m) RET(MMSYSERR_ERROR, 2);
++    if (m->io_owned) hle_free(m->io);
+     if (m->owns) hle_free(m->data);
+     free(m);
+     hle_handle_close(A32(0));
+@@ -236,7 +265,7 @@
+     if (!m) RET(0xFFFFFFFFu, 3);
+     uint32_t n = A32(2) < m->len - m->pos ? A32(2) : m->len - m->pos;
+     memcpy(APTR(1), m->data + m->pos, n);
+-    m->pos += n;
++    mmio_position(m, m->pos + n);
+     RET(n, 3);
+ }
+ static void m_mmioWrite(void) { RET(0xFFFFFFFFu, 3); }
+@@ -244,7 +273,7 @@
+     hmmio *m = MMIO(A32(0));
+     int64_t to = (int32_t)A32(1) + (int64_t)(A32(2) == 1 ? m ? m->pos : 0 : A32(2) == 2 ? m ? m->len : 0 : 0);
+     if (!m || to < 0 || to > m->len) RET(0xFFFFFFFFu, 3);
+-    m->pos = (uint32_t)to;
++    mmio_position(m, (uint32_t)to);
+     RET(m->pos, 3);
+ }
+ static void m_mmioDescend(void) {                        /* (h, MMCKINFO*, parent, flags) */
+@@ -265,10 +294,10 @@
+                   : flags & 0x40 ? id == FOURCC_LIST && type == MEM32(ck + 8) : 1;     /* FINDLIST */
+         if (found) {
+             MEM32(ck) = id, MEM32(ck + 4) = size, MEM32(ck + 8) = type, MEM32(ck + 12) = data, MEM32(ck + 16) = 0;
+-            m->pos = data + (list ? 4 : 0);
++            mmio_position(m, data + (list ? 4 : 0));
+             RET(0, 4);
+         }
+-        m->pos = data + size + (size & 1);
++        mmio_position(m, data + size + (size & 1));
+     }
+ }
+ static void m_mmioAscend(void) {                         /* (h, MMCKINFO*, flags) */
+@@ -276,12 +305,12 @@
+     uint32_t ck = A32(1), to = MEM32(ck + 12) + MEM32(ck + 4);
+     if (!m) RET(MMSYSERR_ERROR, 3);
+     to += to & 1;
+-    m->pos = to < m->len ? to : m->len;
++    mmio_position(m, to < m->len ? to : m->len);
+     RET(0, 3);
+ }
+ static void m_mmioGetInfo(void) {                        /* (h, MMIOINFO*, flags) */
+     hmmio *m = MMIO(A32(0));
+-    if (!m) RET(MMSYSERR_ERROR, 3);
++    if (!m || !A32(1)) RET(MMSYSERR_ERROR, 3);
+     memset(APTR(1), 0, 72);
+     mmio_info(m, A32(1), A32(0));
+     RET(0, 3);
+@@ -289,17 +318,74 @@
+ static void m_mmioSetInfo(void) {                        /* (h, MMIOINFO*, flags): where pchNext got to */
+     hmmio *m = MMIO(A32(0));
+     if (!m) RET(MMSYSERR_ERROR, 3);
+-    uint32_t next = MEM32(A32(1) + 28) - hle_va(m->data);
+-    m->pos = next < m->len ? next : m->len;
++    if (!A32(1)) RET(MMSYSERR_ERROR, 3);
++    if (m->io_set) {
++        uint32_t base = m->io ? hle_va(m->io) : 0;
++        uint32_t next = MEM32(A32(1) + 28);
++        if (MEM32(A32(1) + 24) != base || next < base ||
++            next-base > m->capacity) RET(MMSYSERR_ERROR, 3);
++        m->next = next-base;
++        uint64_t pos = (uint64_t)m->window + m->next;
++        m->pos = pos < m->len ? (uint32_t)pos : m->len;
++    } else {
++        uint32_t next = MEM32(A32(1) + 28) - hle_va(m->data);
++        m->pos = next < m->len ? next : m->len;
++    }
+     RET(0, 3);
+ }
+ static void m_mmioAdvance(void) {                        /* (h, MMIOINFO*, flags) */
+     hmmio *m = MMIO(A32(0));
+     if (!m) RET(MMSYSERR_ERROR, 3);
+-    if (A32(1)) { uint32_t next = MEM32(A32(1) + 28) - hle_va(m->data); m->pos = next < m->len ? next : m->len; mmio_info(m, A32(1), A32(0)); }
++    if (m->io_set) {
++        if (!m->capacity || !m->io || m->disk > m->len || A32(2) != 0) RET(MMSYSERR_ERROR, 3);
++        if (A32(1)) {
++            uint32_t base = hle_va(m->io), next = MEM32(A32(1) + 28);
++            if (MEM32(A32(1) + 24) != base || next < base ||
++                next-base > m->capacity) RET(MMSYSERR_ERROR, 3);
++        }
++        uint32_t n = m->len-m->disk;
++        if (n > m->capacity) n = m->capacity;
++        /* Refill always advances the disk window, even if the caller did
++         * not consume the preceding one. At EOF preserve buffer contents;
++         * only the valid range becomes empty. */
++        if (n) memmove(m->io, m->data+m->disk, n);
++        m->window = m->pos = m->disk;
++        m->disk += n;
++        m->valid = n;
++        m->next = 0;
++        if (A32(1)) mmio_info(m, A32(1), A32(0));
++    } else if (A32(1)) {
++        uint32_t next = MEM32(A32(1) + 28) - hle_va(m->data);
++        m->pos = next < m->len ? next : m->len;
++        mmio_info(m, A32(1), A32(0));
++    }
+     RET(0, 3);
+ }
+-static void m_mmioSetBuffer(void) { RET(0, 4); }        /* the buffer is the whole file already */
++static void m_mmioSetBuffer(void) {                 /* (h, buffer, capacity, flags) */
++    hmmio *m = MMIO(A32(0));
++    int32_t size = (int32_t)A32(2);
++    if (!m || !m->owns || size < 0 || A32(3) || (!size && A32(1)))
++        RET(MMSYSERR_ERROR, 4);
++    if (m->io_owned && A32(1)) {
++        uint32_t base = hle_va(m->io), requested = A32(1);
++        if (requested >= base && requested-base < hle_heap_size(m->io) &&
++            (requested != base || (uint32_t)size > hle_heap_size(m->io)))
++            RET(MMSYSERR_ERROR, 4);
++    }
++    uint8_t *buffer = A32(1) ? (uint8_t *)hle_ptr(A32(1)) : NULL;
++    int owned = size && !buffer;
++    if (owned && !(buffer = hle_alloc((uint32_t)size))) RET(MMSYSERR_ERROR, 4);
++    /* Do not discard a working buffer on allocation/argument failure. */
++    if (m->io_owned && m->io != buffer) hle_free(m->io);
++    else if (m->io_owned && m->io == buffer) owned = 1;
++    m->io = size ? buffer : NULL;
++    m->capacity = (uint32_t)size;
++    m->window = m->disk = m->pos;
++    m->valid = m->next = 0;
++    m->io_set = 1;
++    m->io_owned = owned;
++    RET(0, 4);
++}
+ 
+ /* mmioStringToFOURCCA(str, flags): the first four characters, padded with
+  * spaces; MMIO_TOUPPER (0x10) upper-cases them. */

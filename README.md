@@ -1,5 +1,20 @@
 # Civilization III: Conquests — Static Recompilation
 
+## Native macOS Apple Silicon port
+
+The native 64-bit Apple Silicon implementation is complete for the validated
+local single-player use described in the [macOS validation ledger](docs/macos-validation.md).
+It runs without Wine, Rosetta, a Windows VM, or a JIT. Setup, a Finder launcher,
+save/reload support, graphics and audio repairs, and local regression tests are
+included. See [macOS setup and requirements](docs/macos.md).
+
+The latest local build passes 31 native tests and 103 Python tests. Verified game
+runs cover new games, compressed save/reload, existing campaigns, and selected
+Conquests scenarios and rules mods. The user accepted the local project as
+complete after playtesting. Intel gameplay, multiplayer, exhaustive long-game
+compatibility, and signed standalone distribution remain outside this validation.
+No proprietary game assets or generated game code are distributed.
+
 A static recompilation of **Sid Meier's Civilization III: Conquests**
 (Firaxis, 2003; the 2015 Steam "Complete" build) from the shipping Win32
 executable to C, compiled fresh and run natively on modern Windows, and on

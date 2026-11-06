@@ -1,0 +1,56 @@
+--- winmm.c
++++ winmm.c
+@@ -15,6 +15,8 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include "win32hle.h"
++#include <strings.h>
++#include "wav_pcm_gain.h"
+ 
+ #define MMSYSERR_NOERROR  0u
+ #define MMSYSERR_ERROR    1u
+@@ -164,6 +166,21 @@
+     MEM32(info + 28) = hle_va(m->data) + m->pos, MEM32(info + 32) = hle_va(m->data) + m->len;
+     MEM32(info + 36) = MEM32(info + 32), MEM32(info + 40) = 0, MEM32(info + 44) = m->len, MEM32(info + 68) = h;
+ }
++#if defined(CIV3_WAV_INPUT_DIVISOR) && CIV3_WAV_INPUT_DIVISOR > 1
++/* Configure once on the game's thread: no environment work in audio callback.
++ * An optional diagnostic override may reduce input gain further (10..30).
++ * It cannot raise gain above the tested safe default. */
++static pthread_once_t g_pcm_gain_once = PTHREAD_ONCE_INIT;
++static unsigned g_pcm_gain_divisor = CIV3_WAV_INPUT_DIVISOR;
++static void set_pcm_gain_divisor(void) {
++    const char *value = getenv("CIV3_WAV_DIVISOR_OVERRIDE");
++    if (!value || !*value) return;
++    char *end;
++    unsigned long requested = strtoul(value, &end, 10);
++    if (end != value && !*end && requested >= CIV3_WAV_INPUT_DIVISOR &&
++        requested <= 30u) g_pcm_gain_divisor = (unsigned)requested;
++}
++#endif
+ static void m_mmioOpenA(void) {                          /* (name, MMIOINFO*, flags) */
+     const char *name = ASTR(0);
+     uint32_t info = A32(1), flags = A32(2);
+@@ -183,6 +200,22 @@
+             RET(0, 3);
+         }
+         fclose(f);
++#if defined(CIV3_WAV_INPUT_DIVISOR) && CIV3_WAV_INPUT_DIVISOR > 1
++        /* The legacy sound.dll mixes many overlapping WAV voices into a
++         * software effect ring. Verified Apple Silicon playback can build
++         * enough accumulated gain to clip the whole channel. Reduce only
++         * PCM sample payloads in this guest-memory copy before mixing:
++         * leave the RIFF header, actual disk files and MP3 music untouched.
++         * A content validator rejects malformed or non-PCM data. */
++        if (name && m->data) {
++            const char *dot = strrchr(name, '.');
++            if (dot && !strcasecmp(dot, ".wav")) {
++                pthread_once(&g_pcm_gain_once, set_pcm_gain_divisor);
++                (void)civ3_wav_reduce_pcm(m->data, (size_t)m->len,
++                                           g_pcm_gain_divisor);
++            }
++        }
++#endif
+     }
+     uint32_t h = hle_handle_alloc(HLE_H_MMIO, m);
+     if (info) MEM32(info + 12) = 0;

@@ -1,0 +1,166 @@
+--- gdidc.c
++++ gdidc.c
+@@ -23,6 +23,7 @@
+ #include <SDL2/SDL_ttf.h>
+ #include "win32hle.h"
+ #include "bitmap_layout.h"
++#include "pixel_io.h"
+ 
+ #define TRANSPARENT 1
+ #define OPAQUE      2
+@@ -34,6 +35,7 @@
+     int bkmode, align, wox, woy, vox, voy, cpx, cpy;
+     int win, is555;                                      /* draws into the window surface; 16bpp is 5-5-5 */
+     const uint32_t *ctab;                                /* an 8bpp DIB's colour table, 0x00RRGGBB */
++    int ctab_n; /* actual DIB table length; zero for non-paletted surfaces */
+     uint32_t bmp;                                        /* the bitmap selected into it */
+     int clip, cl, ct, cr, cb;                            /* SelectClipRgn's rectangle, in pixels */
+ } dc_t;
+@@ -455,7 +457,7 @@
+     if (d && g && g->type == GO_BITMAP) {                /* select a bitmap into a memory DC */
+         old = d->bmp ? d->bmp : stock(0);
+         d->px = g->px, d->w = g->w, d->h = g->h, d->pitch = g->pitch, d->bpp = g->bpp;
+-        d->is555 = g->is555, d->ctab = g->pal, d->bmp = o, d->win = 0;
++        d->is555 = g->is555, d->ctab = g->pal, d->ctab_n = g->paln, d->bmp = o, d->win = 0;
+         RET(old, 2);
+     }
+     RET(stock(0), 2);
+@@ -488,7 +490,7 @@
+     o->w = w; o->h = h; o->bpp = bpp; o->is555 = bpp == 16 && is555;
+     o->px = topdown ? bits : bits + (size_t)(h - 1) * (size_t)pitch;
+     o->pitch = topdown ? pitch : -pitch;
+-    o->pal = palette; o->paln = bpp <= 8 ? 256 : 0;
++    o->pal = palette; o->paln = bpp <= 8 ? (ncolors ? ncolors : (1 << bpp)) : 0;
+     if (palette && ctab && ncolors) memcpy(palette, ctab, (size_t)ncolors * sizeof *palette);
+     return handle;
+ }
+@@ -554,13 +556,13 @@
+     if (d->clip) d->cl = g->style, d->ct = g->width, d->cr = g->w, d->cb = g->h;
+     RET(d->clip && (d->cl >= d->cr || d->ct >= d->cb) ? 1u : 2u, 2);   /* NULLREGION, SIMPLEREGION */
+ }
+-/* SetDIBColorTable(hdc, start, n, RGBQUAD[]): the selected 8bpp DIB's colours. */
++/* Selected 1/4/8-bit DIB table; subtraction avoids start+n overflow. */
+ static void g_SetDIBColorTable(void) {
+     dc_t *d = DC(A32(0));
+     gobj_t *g = d ? GOBJ(d->bmp) : NULL;
+     uint32_t start = A32(1), n = A32(2), q = A32(3);
+-    if (!g || !g->pal || start >= 256) RET(0, 4);
+-    if (start + n > 256) n = 256 - start;
++    if (!g || !g->pal || !q || g->paln <= 0 || start >= (uint32_t)g->paln) RET(0, 4);
++    if (n > (uint32_t)g->paln - start) n = (uint32_t)g->paln - start;
+     for (uint32_t i = 0; i < n; i++) g->pal[start + i] = MEM32(q + 4 * i) & 0xFFFFFFu;
+     RET(n, 4);
+ }
+@@ -666,25 +668,27 @@
+     RET(1, 2);
+ }
+ 
++static uint32_t from_rgb(const dc_t *d, uint32_t c);
+ static uint32_t pack(const dc_t *d, uint32_t cr) {       /* COLORREF 0x00BBGGRR -> the surface's pixel */
+     uint32_t r = cr & 0xFF, g = (cr >> 8) & 0xFF, b = (cr >> 16) & 0xFF;
+     if (d->bpp == 16) return d->is555 ? (r >> 3) << 10 | (g >> 3) << 5 | (b >> 3) : (r >> 3) << 11 | (g >> 2) << 5 | (b >> 3);
+-    return r << 16 | g << 8 | b;
++    return from_rgb(d, r << 16 | g << 8 | b);
+ }
+ static void put(dc_t *d, int x, int y, uint32_t v) {
+     if (d->clip && (x < d->cl || x >= d->cr || y < d->ct || y >= d->cb)) return;
+-    uint8_t *p = d->px + (ptrdiff_t)y * d->pitch + (size_t)x * (size_t)(d->bpp / 8);
+-    if (d->bpp == 16) *(uint16_t *)p = (uint16_t)v;
+-    else if (d->bpp == 32) *(uint32_t *)p = v;
+-    else if (d->bpp == 8) *p = (uint8_t)v;
++    civ3_pixel_store(d->px + (ptrdiff_t)y * d->pitch, (size_t)x, (unsigned)d->bpp, v);
+ }
+ static uint32_t get(dc_t *d, int x, int y) {
+-    const uint8_t *p = d->px + (ptrdiff_t)y * d->pitch + (size_t)x * (size_t)(d->bpp / 8);
+-    return d->bpp == 16 ? *(const uint16_t *)p : d->bpp == 8 ? *p : *(const uint32_t *)p;
++    return civ3_pixel_load(d->px + (ptrdiff_t)y * d->pitch, (size_t)x, (unsigned)d->bpp);
+ }
+ /* A pixel as 0x00RRGGBB, and back: what a blit between depths goes through. */
+ static uint32_t to_rgb(const dc_t *d, uint32_t v) {
+-    if (d->bpp == 8) return d->ctab ? d->ctab[v & 0xFF] : v * 0x010101u;
++    if (d->bpp == 1 || d->bpp == 4 || d->bpp == 8) {
++        unsigned maximum = (1u << d->bpp) - 1u;
++        v &= maximum;
++        if (d->ctab) return v < (unsigned)d->ctab_n ? d->ctab[v] & 0xFFFFFFu : 0;
++        return (v * 255u / maximum) * 0x010101u;
++    }
+     if (d->bpp == 16) {
+         uint32_t r = d->is555 ? v >> 10 & 31 : v >> 11, g = d->is555 ? (v >> 5 & 31) << 1 | (v >> 9 & 1) : v >> 5 & 63, b = v & 31;
+         return (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
+@@ -694,7 +698,23 @@
+ static uint32_t from_rgb(const dc_t *d, uint32_t c) {
+     uint32_t r = c >> 16 & 0xFF, g = c >> 8 & 0xFF, b = c & 0xFF;
+     if (d->bpp == 16) return d->is555 ? (r >> 3) << 10 | (g >> 3) << 5 | (b >> 3) : (r >> 3) << 11 | (g >> 2) << 5 | (b >> 3);
+-    if (d->bpp == 8) return (r * 77 + g * 151 + b * 28) >> 8;      /* ponytail: grey; nothing blits into an 8bpp DIB yet */
++    if (d->bpp == 1 || d->bpp == 4 || d->bpp == 8) {
++        unsigned maximum = (1u << d->bpp) - 1u;
++        if (d->ctab && d->ctab_n > 0) {
++            unsigned count = (unsigned)d->ctab_n, best = 0, distance = UINT32_MAX;
++            if (count > maximum + 1u) count = maximum + 1u;
++            for (unsigned i = 0; i < count; i++) {
++                uint32_t rgb = d->ctab[i];
++                int dr = (int)r - (int)(rgb >> 16 & 255u);
++                int dg = (int)g - (int)(rgb >> 8 & 255u);
++                int db = (int)b - (int)(rgb & 255u);
++                unsigned delta = (unsigned)(dr*dr + dg*dg + db*db);
++                if (delta < distance) { best = i; distance = delta; if (!delta) break; }
++            }
++            return best;
++        }
++        return (((r*77u + g*151u + b*28u) >> 8) * maximum + 127u) / 255u;
++    }
+     return c;
+ }
+ static uint32_t mix(const dc_t *d, uint32_t under, uint32_t over, int a) {
+@@ -705,10 +725,12 @@
+         int b = ((under & 31) * (255 - a) + (over & 31) * a) / 255;
+         return (uint32_t)(r << 11 | g << 5 | b);
+     }
++    int indexed = d->bpp == 1 || d->bpp == 4 || d->bpp == 8;
++    if (indexed) { under = to_rgb(d, under); over = to_rgb(d, over); }
+     uint32_t out = 0;
+     for (int s = 0; s < 24; s += 8)
+         out |= (uint32_t)((((under >> s) & 255) * (255 - a) + ((over >> s) & 255) * a) / 255) << s;
+-    return out;
++    return indexed ? from_rgb(d, out) : out;
+ }
+ 
+ /* The text's coverage, 0..255 a pixel, the width GetTextExtentPoint32
+@@ -901,20 +923,28 @@
+ 
+ static void blt(dc_t *dst, int dx, int dy, int w, int h, dc_t *src, int sx, int sy, int sw, int sh) {
+     if (!dst || !dst->px || !src || !src->px || w <= 0 || h <= 0) return;
+-    int same = src->bpp == dst->bpp && src->is555 == dst->is555 && src->bpp != 8;
++    int same = src->bpp == dst->bpp && src->is555 == dst->is555 && src->bpp > 8;
+     if (dst->win) g_win_seq++;
+     if (fast_blt(dst,dx,dy,w,h,src,sx,sy,sw,sh)) {
+         if (dst->win && hle_gdi_window_hook) hle_gdi_window_hook();
+         return;
+     }
+-    for (int j = 0; j < h; j++) {
+-        int py = dy + j; if (py < 0 || py >= dst->h) continue;
+-        int sj = sy + (sh == h ? j : j * sh / h); if (sj < 0 || sj >= src->h) continue;
+-        for (int i = 0; i < w; i++) {
+-            int px = dx + i; if (px < 0 || px >= dst->w) continue;
+-            int si = sx + (sw == w ? i : i * sw / w); if (si < 0 || si >= src->w) continue;
+-            uint32_t v = get(src, si, sj);
+-            put(dst, px, py, same ? v : from_rgb(dst, to_rgb(src, v)));
++    /* Clip destination work before entering the scalar loop. Large offscreen
++     * rectangles now cost only visible pixels; 64-bit scaling cannot wrap. */
++    int64_t left = clip_max(0, -(int64_t)dx), top = clip_max(0, -(int64_t)dy);
++    int64_t right = clip_min(w, (int64_t)dst->w - dx), bottom = clip_min(h, (int64_t)dst->h - dy);
++    if (dst->clip) {
++        left = clip_max(left, (int64_t)dst->cl - dx); top = clip_max(top, (int64_t)dst->ct - dy);
++        right = clip_min(right, (int64_t)dst->cr - dx); bottom = clip_min(bottom, (int64_t)dst->cb - dy);
++    }
++    for (int64_t j = top; j < bottom; j++) {
++        int64_t sj = (int64_t)sy + (sh == h ? j : j * (int64_t)sh / h);
++        if (sj < 0 || sj >= src->h) continue;
++        for (int64_t i = left; i < right; i++) {
++            int64_t si = (int64_t)sx + (sw == w ? i : i * (int64_t)sw / w);
++            if (si < 0 || si >= src->w) continue;
++            uint32_t v = get(src, (int)si, (int)sj);
++            put(dst, (int)((int64_t)dx+i), (int)((int64_t)dy+j), same ? v : from_rgb(dst, to_rgb(src, v)));
+         }
+     }
+     if (dst->win && hle_gdi_window_hook) hle_gdi_window_hook();

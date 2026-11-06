@@ -1,0 +1,143 @@
+--- dsound.c
++++ dsound.c
+@@ -22,6 +22,8 @@
+ #include <pthread.h>
+ #include <SDL2/SDL.h>
+ #include "win32hle.h"
++#include "sfx_guard.h"
++#include "sfx_softlimit.h"
+ 
+ #define DS_OK               0u
+ #define DSERR_INVALIDPARAM  0x80070057u
+@@ -45,9 +47,30 @@
+     double pos;                 /* the play cursor, in frames */
+     int volume, pan;            /* hundredths of a dB; -10000..10000 */
+     float gl, gr;
++    civ3_sfx_guard guard;         /* only for sustained overdriven software SFX */
+ } dsbuf;
+ 
+ static pthread_mutex_t g_mix = PTHREAD_MUTEX_INITIALIZER;
++/* Cache environment switches on the game thread before SDL starts the audio
++ * callback. getenv and fprintf can block: neither runs in normal audio mixing. */
++static pthread_once_t g_sfx_guard_cfg_once = PTHREAD_ONCE_INIT;
++static int g_sfx_guard_disabled, g_sfx_guard_log;
++static float g_sfx_output_gain = 1.0f;
++static void configure_sfx_guard(void) {
++    const char *disable = getenv("CIV3_DISABLE_SFX_GUARD");
++    const char *diagnostics = getenv("CIV3_SFX_GUARD_LOG");
++    const char *output = getenv("CIV3_SFX_OUTPUT_GAIN");
++    g_sfx_guard_disabled = disable && disable[0] && strcmp(disable, "0");
++    g_sfx_guard_log = diagnostics && diagnostics[0] && strcmp(diagnostics, "0");
++    /* WAV input is pre-scaled to prevent overflow inside the guest. Restore
++     * part of the perceived volume at the very end of the sound pipeline. */
++    if (output && output[0]) {
++        char *end = NULL;
++        float requested = strtof(output, &end);
++        if (end != output && !*end && requested >= 1.0f && requested <= 3.0f)
++            g_sfx_output_gain = requested;
++    }
++}
+ #define MAX_BUFS 256
+ static dsbuf *g_buf[MAX_BUFS];
+ static SDL_AudioDeviceID g_dev;
+@@ -142,7 +165,17 @@
+         dsbuf *b = g_buf[i];
+         if (!b || !b->playing || b->primary || !b->block) continue;
+         uint32_t nframes = b->bytes / (uint32_t)b->block;
++        if (!nframes || b->rate <= 0) continue;
+         double step = (double)b->rate / OUT_RATE;
++        /* Civ3's software SFX ring (0x10088) can develop an endlessly
++         * overdriven repeated sample even while sound.dll keeps writing.
++         * Other buffers, especially MP3 music (0x10080), are unaffected. */
++        int effects_ring = (b->flags & 0x00000008u) && b->looping && b->bytes >= 32768u;
++        int guarded = effects_ring && !g_sfx_guard_disabled;
++        float gain = (guarded ? b->guard.gain : 1.0f) *
++                     (effects_ring ? g_sfx_output_gain : 1.0f);
++        double energy = 0;
++        unsigned clipped = 0, count = 0;
+         for (int f = 0; f < frames && b->playing; f++) {
+             uint32_t at = (uint32_t)b->pos;
+             if (at >= nframes) {
+@@ -150,9 +183,36 @@
+                 else { b->playing = 0; b->pos = 0; break; }
+             }
+             float l = sample(b, at, 0), r = b->channels > 1 ? sample(b, at, 1) : l;
+-            acc[2 * f] += l * b->gl;
+-            acc[2 * f + 1] += r * b->gr;
++            float vl = l * b->gl, vr = r * b->gr;
++            if (guarded) {
++                energy += (double)vl * vl + (double)vr * vr;
++                clipped += vl >= 0.96f || vl <= -0.96f ||
++                           vr >= 0.96f || vr <= -0.96f;
++                ++count;
++            }
++            float mixed_l = vl * gain, mixed_r = vr * gain;
++            /* Source attenuation prevents the guest's runaway voice gain.
++             * The last-stage effects boost can still peak above full scale:
++             * smooth *only effects* (not MP3 music) before adding to output. */
++            if (effects_ring) {
++                mixed_l = civ3_sfx_soft_limit(mixed_l);
++                mixed_r = civ3_sfx_soft_limit(mixed_r);
++            }
++            acc[2 * f] += mixed_l;
++            acc[2 * f + 1] += mixed_r;
+             b->pos += step;
++        }
++        if (guarded && count) {
++            float rms = sqrtf((float)(energy / (2.0 * count)));
++            float clip_fraction = (float)clipped / (float)count;
++            int change = civ3_sfx_guard_step(&b->guard, rms, clip_fraction,
++                                             count, OUT_RATE);
++            if (change && g_sfx_guard_log) {
++                /* Opt-in test diagnostics only; never write a log from the
++                 * realtime audio callback during normal gameplay. */
++                fprintf(stderr, "[dsound] sustained SFX distortion %s; MP3 buffer separate (rms=%.3f, clipped=%.1f%%)\n",
++                        change > 0 ? "suppressed" : "cleared", rms, 100.0f * clip_fraction);
++            }
+         }
+     }
+     for (int i = 0; i < MAX_STREAMS; i++) {
+@@ -248,6 +308,7 @@
+ }
+ static int audio_open(void) {
+     if (g_audio_ok >= 0) return g_audio_ok;
++    pthread_once(&g_sfx_guard_cfg_once, configure_sfx_guard);
+     g_audio_ok = 0;
+     pthread_t t;
+     if (pthread_create(&t, NULL, audio_feeder, NULL) != 0) { fprintf(stderr, "[dsound] no feeder thread: silent\n"); return 0; }
+@@ -259,6 +320,7 @@
+ #else
+ static int audio_open(void) {
+     if (g_audio_ok >= 0) return g_audio_ok;
++    pthread_once(&g_sfx_guard_cfg_once, configure_sfx_guard);
+     g_audio_ok = 0;
+     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");      /* SIGINT and SIGTERM end the process, not WM_CLOSE */
+     SDL_AudioSpec want, have;
+@@ -378,6 +440,10 @@
+     dsbuf *b = buf_of(A32(0));
+     if (!b) RET(DSERR_INVALIDPARAM, 4);
+     pthread_mutex_lock(&g_mix);
++    if (!b->playing) {
++        memset(&b->guard, 0, sizeof b->guard);
++        b->guard.gain = 1.0f;
++    }
+     b->playing = 1, b->looping = (A32(3) & DSBPLAY_LOOPING) != 0;
+     pthread_mutex_unlock(&g_mix);
+     RET(DS_OK, 4);
+@@ -457,6 +523,7 @@
+     dsbuf *b = (dsbuf *)calloc(1, sizeof *b);
+     if (!b) RET(DSERR_INVALIDPARAM, 4);
+     b->flags = flags, b->primary = (flags & DSBCAPS_PRIMARYBUFFER) != 0;
++    b->guard.gain = 1.0f;
+     b->channels = 2, b->bits = 16, b->rate = 22050, b->block = 4;
+     if (wfx) {
+         b->channels = MEM16(wfx + 2), b->rate = (int)MEM32(wfx + 4), b->block = MEM16(wfx + 12), b->bits = MEM16(wfx + 14);
+@@ -506,6 +573,8 @@
+     (*b->data_refs)++;
+     pthread_mutex_unlock(&g_mix);
+     b->playing = 0, b->pos = 0;
++    memset(&b->guard, 0, sizeof b->guard);
++    b->guard.gain = 1.0f;
+     uint32_t o = new_buffer(b);
+     if (!o) {
+         /* The COM slot table is full: undo the shared sample reference

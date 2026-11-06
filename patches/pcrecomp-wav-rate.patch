@@ -1,0 +1,43 @@
+--- winmm.c
++++ winmm.c
+@@ -18,6 +18,8 @@
+ #include "winmm_timer_schedule.h"
+ #include <strings.h>
+ #include "wav_pcm_gain.h"
++#include "wav_pcm_rate.h"
++#include "wav_mixer_rate.h"
+ 
+ #define MMSYSERR_NOERROR  0u
+ #define MMSYSERR_ERROR    1u
+@@ -230,6 +232,31 @@
+             RET(0, 3);
+         }
+         fclose(f);
++        uint32_t rate = civ3_sfx_mixer_rate();
++        const char *extension = name ? strrchr(name, '.') : NULL;
++        if (rate && extension && !strcasecmp(extension, ".wav")) {
++            struct civ3_wav_rate_image converted = {0};
++            enum civ3_wav_rate_result result = civ3_wav_resample_pcm(
++                m->data, m->len, rate, &converted);
++            uint8_t *replacement = NULL;
++            if (result == CIV3_WAV_RATE_CONVERTED && converted.length < UINT32_MAX)
++                replacement = hle_alloc((uint32_t)converted.length + 1u);
++            if (result == CIV3_WAV_RATE_ERROR ||
++                (result == CIV3_WAV_RATE_CONVERTED && !replacement)) {
++                free(converted.bytes);
++                hle_free(m->data);
++                free(m);
++                if (info) MEM32(info + 12) = MMIOERR_CANNOTOPEN;
++                RET(0, 3);
++            }
++            if (replacement) {
++                memcpy(replacement, converted.bytes, converted.length);
++                hle_free(m->data);
++                m->data = replacement;
++                m->len = (uint32_t)converted.length;
++            }
++            free(converted.bytes);
++        }
+ #if defined(CIV3_WAV_INPUT_DIVISOR) && CIV3_WAV_INPUT_DIVISOR > 1
+         /* The legacy sound.dll mixes many overlapping WAV voices into a
+          * software effect ring. Verified Apple Silicon playback can build

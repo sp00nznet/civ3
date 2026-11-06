@@ -1,0 +1,111 @@
+--- kernel32_ext.c
++++ kernel32_ext.c
+@@ -54,8 +54,30 @@
+ }
+ 
+ /* ---- file objects ---- */
+-typedef struct { int fd; } hfile;
+-static void file_closer(void *o) { hfile *f = (hfile *)o; if (f->fd > 2) close(f->fd); free(f); }
++/* In-process Win32 sharing checks. Guest calls are serialized by the
++ * machine lock. Identity is the opened inode, not a case-sensitive pathname.
++ * Native processes and unrelated host I/O do not participate in this table. */
++typedef struct hfile {
++    int fd;
++    dev_t device;
++    ino_t inode;
++    uint32_t access, share; /* read=1, write=2, delete=4 */
++    struct hfile *next;
++} hfile;
++static hfile *g_open_files;
++static int sharing_conflict(const struct stat *st, uint32_t access, uint32_t share) {
++    for (hfile *f = g_open_files; f; f = f->next)
++        if (f->device == st->st_dev && f->inode == st->st_ino &&
++            ((access & ~f->share) || (f->access & ~share))) return 1;
++    return 0;
++}
++static void file_closer(void *o) {
++    hfile *f = (hfile *)o, **link = &g_open_files;
++    while (*link && *link != f) link = &(*link)->next;
++    if (*link) *link = f->next;
++    if (f->fd > 2) close(f->fd);
++    free(f);
++}
+ 
+ /* The standard handles (kernel32_crt.c's GetStdHandle) are 0x11..0x13. */
+ static int fd_of(uint32_t h) {
+@@ -68,14 +90,26 @@
+ 
+ int hle_file_fd(uint32_t h) { return fd_of(h); }   /* a file HANDLE's descriptor, for a host (Bink reads the game's) */
+ 
+-static uint32_t new_file(int fd) {
++static uint32_t new_file_shared(int fd, uint32_t access, uint32_t share) {
+     static int closer_set;
+     if (!closer_set) hle_handle_set_closer(HLE_H_FILE, file_closer), closer_set = 1;
+-    hfile *f = (hfile *)malloc(sizeof *f);
+-    f->fd = fd;
++    struct stat st;
++    hfile *f = (hfile *)calloc(1, sizeof *f);
++    if (!f || fstat(fd, &st) != 0) {
++        free(f); close(fd); hle_set_last_error(8); return INVALID_HANDLE;
++    }
++    f->fd = fd; f->device = st.st_dev; f->inode = st.st_ino;
++    f->access = access; f->share = share;
+     uint32_t h = hle_handle_alloc(HLE_H_FILE, f);
+-    if (!h) { close(fd); free(f); return INVALID_HANDLE; }
++    if (!h) { close(fd); free(f); hle_set_last_error(8); return INVALID_HANDLE; }
++    f->next = g_open_files; g_open_files = f;
+     return h;
++}
++static uint32_t new_file(int fd) {
++    /* Legacy _lopen family: preserve its prior permissive sharing mode. */
++    int mode = fcntl(fd, F_GETFL) & O_ACCMODE;
++    uint32_t access = mode == O_RDWR ? 3u : mode == O_WRONLY ? 2u : 1u;
++    return new_file_shared(fd, access, 7u);
+ }
+ 
+ /* Device names a Windows program may open that a host has no file for. */
+@@ -125,7 +159,10 @@
+     } else {
+         exists = hle_host_path(name, path, sizeof path);
+     }
+-    int rd = (access & 0x80000000u) || !(access & 0x40000000u), wr = (access & 0x40000000u) != 0;
++    uint32_t requested = ((access & (0x80000000u | 0x10000000u | 0x1u)) ? 1u : 0u) |
++                         ((access & (0x40000000u | 0x10000000u | 0x6u)) ? 2u : 0u) |
++                         ((access & 0x00010000u) ? 4u : 0u);
++    int rd = (requested & 1u) || !(requested & 2u), wr = (requested & 2u) != 0;
+     int fl = rd && wr ? O_RDWR : wr ? O_WRONLY : O_RDONLY;
+     switch (disp) {
+     case 1: fl |= O_CREAT | O_EXCL; break;
+@@ -139,13 +176,30 @@
+         hle_set_last_error(ERROR_ACCESS_DENIED);    /* a directory, without FILE_FLAG_BACKUP_SEMANTICS */
+         RET(INVALID_HANDLE, 7);
+     }
+-    int fd = open(path, fl | O_CLOEXEC, 0644);
++    /* Never truncate before checking both directions of sharing compatibility.
++     * Civ3 probes save0.tmp, save1.tmp...; a mapped save0.tmp is still open
++     * without FILE_SHARE_WRITE, so the second decompression must try save1. */
++    int fd = open(path, (fl & ~O_TRUNC) | O_CLOEXEC, 0644);
++    uint32_t share = A32(2) & 7u;
++    if (fd >= 0 && fstat(fd, &st) != 0) {
++        int saved = errno; close(fd); hle_set_last_error(errno_to_win(saved));
++        RET(INVALID_HANDLE, 7);
++    }
++    if (fd >= 0 && sharing_conflict(&st, requested, share)) {
++        close(fd);
++        if (hle_filetrace()) fprintf(stderr, "[file] sharing violation: %s\n", name);
++        hle_set_last_error(32); RET(INVALID_HANDLE, 7); /* ERROR_SHARING_VIOLATION */
++    }
++    if (fd >= 0 && (fl & O_TRUNC) && ftruncate(fd, 0) != 0) {
++        int saved = errno; close(fd); hle_set_last_error(errno_to_win(saved));
++        RET(INVALID_HANDLE, 7);
++    }
+     if (hle_filetrace())
+         fprintf(stderr, "[file] CreateFileA \"%s\" -> %s %s\n", name, path, fd >= 0 ? "ok" : strerror(errno));
+     if (fd < 0) { hle_set_last_error(errno_to_win(errno)); RET(INVALID_HANDLE, 7); }
+     if ((fl & O_CREAT) && !exists) hle_path_changed();
+     hle_set_last_error(exists && (disp == 2 || disp == 4) ? ERROR_ALREADY_EXISTS : 0);
+-    RET(new_file(fd), 7);
++    RET(new_file_shared(fd, requested, share), 7);
+ }
+ 
+ static void k_ReadFile(void) {                           /* (h,buf,n,&read,ovl) */

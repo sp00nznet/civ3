@@ -1,0 +1,64 @@
+--- gdidc.c
++++ gdidc.c
+@@ -824,10 +824,61 @@
+ }
+ /* ---- blits (DC -> DC); like-for-like bpp, which is what a game's own
+  * back-buffer-to-window blit is ---- */
++/* Non-stretching, non-overlapping true-colour transfers. Clip once, then
++ * copy rows or expand RGB555/565 directly. Other cases keep the scalar path.
++ * Callers serialize DC access with the guest machine lock. */
++static int64_t clip_max(int64_t a, int64_t b) { return a > b ? a : b; }
++static int64_t clip_min(int64_t a, int64_t b) { return a < b ? a : b; }
++static int fast_blt(dc_t *dst, int dx, int dy, int w, int h,
++                    dc_t *src, int sx, int sy, int sw, int sh) {
++    int copy = src->bpp == dst->bpp && src->is555 == dst->is555 &&
++               (src->bpp == 16 || src->bpp == 32);
++    int expand = src->bpp == 16 && dst->bpp == 32;
++    if ((!copy && !expand) || w != sw || h != sh || src->w <= 0 || src->h <= 0 ||
++        dst->w <= 0 || dst->h <= 0) return 0;
++    /* 64-bit arithmetic also handles INT_MIN offsets without signed overflow. */
++    int64_t l = clip_max(0, clip_max(-(int64_t)dx, -(int64_t)sx));
++    int64_t t = clip_max(0, clip_max(-(int64_t)dy, -(int64_t)sy));
++    int64_t r = clip_min(w, clip_min((int64_t)dst->w - dx, (int64_t)src->w - sx));
++    int64_t b = clip_min(h, clip_min((int64_t)dst->h - dy, (int64_t)src->h - sy));
++    if (dst->clip) {
++        l = clip_max(l, (int64_t)dst->cl - dx); t = clip_max(t, (int64_t)dst->ct - dy);
++        r = clip_min(r, (int64_t)dst->cr - dx); b = clip_min(b, (int64_t)dst->cb - dy);
++    }
++    if (l >= r || t >= b) return 1;
++    size_t columns = (size_t)(r-l), rows = (size_t)(b-t);
++    size_t sb = columns * (unsigned)(src->bpp/8), db = columns * (unsigned)(dst->bpp/8);
++    const uint8_t *s = src->px + (ptrdiff_t)((int64_t)sy+t)*src->pitch + (size_t)((int64_t)sx+l)*(unsigned)(src->bpp/8);
++    uint8_t *d = dst->px + (ptrdiff_t)((int64_t)dy+t)*dst->pitch + (size_t)((int64_t)dx+l)*(unsigned)(dst->bpp/8);
++    uintptr_t s0=(uintptr_t)s,s1=(uintptr_t)(s+(ptrdiff_t)(rows-1)*src->pitch);
++    uintptr_t d0=(uintptr_t)d,d1=(uintptr_t)(d+(ptrdiff_t)(rows-1)*dst->pitch);
++    uintptr_t slo=s0<s1?s0:s1, shi=(s0>s1?s0:s1)+sb;
++    uintptr_t dlo=d0<d1?d0:d1, dhi=(d0>d1?d0:d1)+db;
++    /* Even different DCs may alias. Preserve the old forward-copy behavior. */
++    if (slo < dhi && dlo < shi) return 0;
++    for(size_t y=0;y<rows;y++) {
++        if(copy) memcpy(d,s,db);
++        else for(size_t x=0;x<columns;x++) {
++            uint16_t v; memcpy(&v,s+x*2,2);
++            uint32_t red=src->is555?(v>>10&31):(v>>11);
++            uint32_t green=src->is555?((v>>5&31)<<1|(v>>9&1)):(v>>5&63);
++            uint32_t blue=v&31;
++            uint32_t rgb=(red<<3|red>>2)<<16 | (green<<2|green>>4)<<8 | (blue<<3|blue>>2);
++            memcpy(d+x*4,&rgb,4);
++        }
++        if(y+1<rows) {s+=src->pitch;d+=dst->pitch;}
++    }
++    return 1;
++}
++
+ static void blt(dc_t *dst, int dx, int dy, int w, int h, dc_t *src, int sx, int sy, int sw, int sh) {
+     if (!dst || !dst->px || !src || !src->px || w <= 0 || h <= 0) return;
+     int same = src->bpp == dst->bpp && src->is555 == dst->is555 && src->bpp != 8;
+     if (dst->win) g_win_seq++;
++    if (fast_blt(dst,dx,dy,w,h,src,sx,sy,sw,sh)) {
++        if (dst->win && hle_gdi_window_hook) hle_gdi_window_hook();
++        return;
++    }
+     for (int j = 0; j < h; j++) {
+         int py = dy + j; if (py < 0 || py >= dst->h) continue;
+         int sj = sy + (sh == h ? j : j * sh / h); if (sj < 0 || sj >= src->h) continue;

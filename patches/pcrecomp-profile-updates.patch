@@ -1,0 +1,103 @@
+--- kernel32_ext.c
++++ kernel32_ext.c
+@@ -648,7 +648,7 @@
+     }
+     if (f) fclose(f);
+     if (buf && size) { strncpy(buf, val, size - 1); buf[size - 1] = 0; }
+-    RET(buf ? (uint32_t)strlen(buf) : 0u, 6);
++    RET(buf && size ? (uint32_t)strlen(buf) : 0u, 6);
+ }
+ static void k_GetPrivateProfileIntA(void) {              /* (sec,key,def,file) */
+     char buf[64] = "", def[16];
+@@ -665,16 +665,82 @@
+     if (f) fclose(f);
+     RET((uint32_t)atoi(got ? buf : def), 4);
+ }
+-/* WritePrivateProfileStringA: append the key under a (possibly new) section;
+- * the reader takes the first match. A title that rewrites keys gets the
+- * in-place version when it needs it. */
+-static void k_WritePrivateProfileStringA(void) {         /* (sec,key,val,file) */
++/* Update the first matching section instead of appending unreachable keys.
++ * Delete all copies of the updated key in duplicate sections left by old
++ * hosts. Other keys, sections and comments are preserved byte-for-byte.
++ * ANSI game INIs only; UTF-16/registry profile redirection is not implemented. */
++static int ini_section_match(const char *line, const char *section) {
++    while (*line == ' ' || *line == '\t') ++line;
++    if (*line != '[') return -1;
++    const char *end = strchr(++line, ']');
++    if (!end) return -1;
++    return (size_t)(end - line) == strlen(section) &&
++           !strncasecmp(line, section, (size_t)(end - line));
++}
++static int ini_key_match(const char *line, const char *key) {
++    while (*line == ' ' || *line == '\t') ++line;
++    if (*line == ';' || *line == '#') return 0;
++    const char *eq = strchr(line, '=');
++    if (!eq) return 0;
++    const char *end = eq;
++    while (end > line && (end[-1] == ' ' || end[-1] == '\t')) --end;
++    return (size_t)(end - line) == strlen(key) &&
++           !strncasecmp(line, key, (size_t)(end - line));
++}
++static void k_WritePrivateProfileStringA(void) {
+     const char *sec = ASTR(0), *key = ASTR(1), *val = ASTR(2), *file = ASTR(3);
+-    if (file && sec && key) {
+-        FILE *f = ini_open(file, "a");
+-        if (f) { fprintf(f, "[%s]\n%s=%s\n", sec, key, val ? val : ""); fclose(f); }
+-    }
+-    RET(1, 4);
++    /* This host has no profile cache to flush. */
++    if (!sec && !key && !val) RET(0, 4);
++    if (!file || !sec) { hle_set_last_error(87); RET(0, 4); }
++    char path[1024], temporary[1100];
++    hle_host_path_for_write(file, path, sizeof path, 1);
++    FILE *in = fopen(path, "r");
++    if (!in && errno != ENOENT) { hle_set_last_error(errno_to_win(errno)); RET(0, 4); }
++    snprintf(temporary, sizeof temporary, "%s.tmp.XXXXXX", path);
++    int fd = mkstemp(temporary);
++    if (fd < 0) { if (in) fclose(in); hle_set_last_error(errno_to_win(errno)); RET(0, 4); }
++    struct stat st;
++    if (in && fstat(fileno(in), &st) == 0) (void)fchmod(fd, st.st_mode & 0777);
++    FILE *out = fdopen(fd, "w");
++    if (!out) {
++        int saved = errno; close(fd); unlink(temporary); if (in) fclose(in);
++        hle_set_last_error(errno_to_win(saved)); RET(0, 4);
++    }
++    char *line = NULL; size_t capacity = 0; ssize_t length;
++    int active = 0, inserted = 0, last_newline = 1, failed = 0;
++    while (in && (length = getline(&line, &capacity, in)) >= 0) {
++        int section = ini_section_match(line, sec);
++        if (section >= 0) {
++            active = section;
++            if (active && !key) continue; /* delete the section header */
++            if (fwrite(line, 1, (size_t)length, out) != (size_t)length) failed = 1;
++            last_newline = length > 0 && line[length - 1] == '\n';
++            if (active && key && val && !inserted) {
++                if (!last_newline) fputc('\n', out);
++                fprintf(out, "%s=%s\n", key, val);
++                inserted = last_newline = 1;
++            }
++            continue;
++        }
++        if (active && (!key || ini_key_match(line, key))) continue;
++        if (fwrite(line, 1, (size_t)length, out) != (size_t)length) failed = 1;
++        last_newline = length > 0 && line[length - 1] == '\n';
++    }
++    if (in) { if (ferror(in)) failed = 1; if (fclose(in)) failed = 1; }
++    free(line);
++    if (!inserted && key && val) {
++        if (!last_newline) fputc('\n', out);
++        fprintf(out, "[%s]\n%s=%s\n", sec, key, val);
++    }
++    if (ferror(out)) failed = 1;
++    if (fclose(out)) failed = 1;
++    if (!failed && rename(temporary, path) == 0) {
++        hle_path_changed(); RET(1, 4);
++    }
++    int saved = errno ? errno : EIO;
++    unlink(temporary);
++    hle_set_last_error(errno_to_win(saved));
++    RET(0, 4);
+ }
+ 
+ /* ---- the Win16 _l* file family (an HFILE is our file HANDLE) ---- */

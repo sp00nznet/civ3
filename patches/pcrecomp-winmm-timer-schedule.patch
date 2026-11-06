@@ -1,0 +1,22 @@
+--- winmm.c
++++ winmm.c
+@@ -15,6 +15,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include "win32hle.h"
++#include "winmm_timer_schedule.h"
+ #include <strings.h>
+ #include "wav_pcm_gain.h"
+ 
+@@ -69,8 +70,9 @@
+         }
+         __sync_fetch_and_sub(&g_mmt[i].inflight, 1);
+         if (!(g_mmt[i].flags & 1u)) break;               /* TIME_ONESHOT */
+-        due += g_mmt[i].delay ? g_mmt[i].delay : 1;
+-        if ((int32_t)(hle_ticks_ms() - due) > 1000) due = hle_ticks_ms();   /* fell far behind: no catch-up storm */
++        /* A late callback already serviced this timer. Drop missed ticks
++         * rather than mixing multiple stale audio frames back-to-back. */
++        due = civ3_winmm_next_due(due, hle_ticks_ms(), g_mmt[i].delay);
+     }
+     g_mmt[i].used = 0;
+     return NULL;

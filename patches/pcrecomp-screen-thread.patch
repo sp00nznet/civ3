@@ -1,0 +1,75 @@
+--- screen.c
++++ screen.c
+@@ -46,6 +46,14 @@
+ static int g_headless, g_fullscreen;
+ static SDL_Rect g_dst;                                   /* where the picture is in the window */
+ static pthread_t g_video_thread;                         /* SDL's video calls stay on the thread that opened it */
++/* Guest audio workers also call PeekMessage. Cocoa must only be polled
++ * and rendered by the thread that created the window. Coalesce the two
++ * cross-thread UI requests the guest can make; the owner applies them. */
++static pthread_mutex_t g_ui_pending_lock = PTHREAD_MUTEX_INITIALIZER;
++static int g_pending_warp, g_warp_x, g_warp_y, g_pending_title;
++static char g_next_title[512];
++static void warp(int x, int y);
++
+ static SDL_Texture *g_pre, *g_small;                     /* sharp's integer prescale; the bars' blur */
+ static int g_pre_w, g_pre_h;
+ 
+@@ -202,6 +210,7 @@
+ }
+ #endif
+ static void present(void) {
++    if (g_win && !pthread_equal(pthread_self(), g_video_thread)) return;
+     const uint8_t *px;
+     const uint32_t *pal;
+     int w, h, pitch, bpp;
+@@ -372,7 +381,16 @@
+ int (*hle_screen_key_hook)(int sdl_scancode, int down);
+ 
+ /* The window's title, for a host that shows what is playing (a mod). */
+-void hle_screen_title(const char *title) { if (g_win) SDL_SetWindowTitle(g_win, title); }
++void hle_screen_title(const char *title) {
++    if (!g_win || !title) return;
++    if (pthread_equal(pthread_self(), g_video_thread)) SDL_SetWindowTitle(g_win, title);
++    else {
++        pthread_mutex_lock(&g_ui_pending_lock);
++        snprintf(g_next_title, sizeof g_next_title, "%s", title);
++        g_pending_title = 1;
++        pthread_mutex_unlock(&g_ui_pending_lock);
++    }
++}
+ 
+ static SDL_Cursor *sdl_cursor_from(const hle_cursor_image_t *img) {
+     /* Windows' AND/XOR masks to SDL's mask/data: AND 0 is opaque (XOR 0 black,
+@@ -672,6 +690,18 @@
+ #endif
+ int g_input_trace;                                         /* a host's --inputtrace */
+ void hle_screen_pump(void) {
++    if (g_win && !pthread_equal(pthread_self(), g_video_thread)) return;
++    if (g_win) {
++        int move, x, y, title_changed; char title[sizeof g_next_title];
++        pthread_mutex_lock(&g_ui_pending_lock);
++        move = g_pending_warp; x = g_warp_x; y = g_warp_y;
++        title_changed = g_pending_title;
++        memcpy(title, g_next_title, sizeof title);
++        g_pending_warp = g_pending_title = 0;
++        pthread_mutex_unlock(&g_ui_pending_lock);
++        if (move) warp(x, y);
++        if (title_changed) SDL_SetWindowTitle(g_win, title);
++    }
+ #ifdef __EMSCRIPTEN__
+     /* the browser's main thread queues this thread's input callbacks */
+     emscripten_current_thread_process_queued_calls();
+@@ -742,6 +772,12 @@
+ 
+ /* The guest moved the cursor (SetCursorPos): move the real one with it. */
+ static void warp(int x, int y) {
++    if (g_win && !pthread_equal(pthread_self(), g_video_thread)) {
++        pthread_mutex_lock(&g_ui_pending_lock);
++        g_warp_x = x; g_warp_y = y; g_pending_warp = 1;
++        pthread_mutex_unlock(&g_ui_pending_lock);
++        return;
++    }
+     int w, h, bpp;
+     hle_dd_mode(&w, &h, &bpp);
+     if (!g_win || g_dst.w <= 0 || w <= 0 || h <= 0) return;

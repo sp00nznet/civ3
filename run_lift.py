@@ -23,7 +23,7 @@ through a vtable is called by no CALL, and an unresolved slot answers eax = 0.
     py -3 run_lift.py --all --module jgl      # game's jgl.dll -> work/, src/recomp/gen_jgl
     py -3 run_lift.py --all --module sound    # sound.dll, rebased -> work/, gen_sound
 
-The DLLs are only needed by the Linux host (src/linux), where nothing can run
+The DLLs are needed by the Linux/macOS host (src/linux), where nothing can run
 their machine code; on Windows native32 loads the real ones.
 """
 import argparse
@@ -35,7 +35,12 @@ import time
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # PCRECOMP picks another toolkit checkout, the same knob CMakeLists.txt has:
 # the lifter and the runtime header must come from the same tree.
-_TOOLS = os.path.join(os.environ.get('PCRECOMP', os.path.join(_HERE, '..', 'tools')), 'tools')
+_DEFAULT_TOOLKIT = next((p for p in (os.path.join(_HERE, '..', 'tools'),
+                                   os.path.join(_HERE, '..', 'pcrecomp'),
+                                   os.path.join(_HERE, '.deps', 'pcrecomp'))
+                         if os.path.isdir(os.path.join(p, 'tools', 'lift'))),
+                        os.path.join(_HERE, '..', 'tools'))
+_TOOLS = os.path.join(os.environ.get('PCRECOMP', _DEFAULT_TOOLKIT), 'tools')
 sys.path.insert(0, os.path.join(_TOOLS, 'lift'))
 sys.path.insert(0, os.path.join(_TOOLS, 'pe'))
 
@@ -251,6 +256,8 @@ def main():
           % (len(chosen), len(stubs), errors, dirty))
     print('  %s lines of C in %d files, %.1fs' % (format(lines, ','), idx, time.time() - t0))
     print('=' * 60)
+    if errors:
+        sys.exit(1)
 
 
 if __name__ == '__main__':

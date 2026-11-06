@@ -1,0 +1,41 @@
+--- dsound.c
++++ dsound.c
+@@ -22,6 +22,7 @@
+ #include <pthread.h>
+ #include <SDL2/SDL.h>
+ #include "win32hle.h"
++#include "wav_mixer_rate.h"
+ #include "sfx_guard.h"
+ #include "sfx_softlimit.h"
+ 
+@@ -74,6 +75,21 @@
+ }
+ #define MAX_BUFS 256
+ static dsbuf *g_buf[MAX_BUFS];
++static int is_effects_ring(const dsbuf *b) {
++    return !b->primary && (b->flags & 0x00000008u) && b->looping && b->bytes >= 32768u;
++}
++uint32_t civ3_sfx_mixer_rate(void) {
++    uint32_t rate = 0;
++    pthread_mutex_lock(&g_mix);
++    for (int i = 0; i < MAX_BUFS; ++i) {
++        dsbuf *b = g_buf[i];
++        if (!b || !is_effects_ring(b)) continue;
++        if (rate && rate != (uint32_t)b->rate) { rate = 0; break; }
++        rate = (uint32_t)b->rate;
++    }
++    pthread_mutex_unlock(&g_mix);
++    return rate;
++}
+ static SDL_AudioDeviceID g_dev;
+ static int g_audio_ok = -1;
+ static float g_master = 1.0f;
+@@ -171,7 +187,7 @@
+         /* Civ3's software SFX ring (0x10088) can develop an endlessly
+          * overdriven repeated sample even while sound.dll keeps writing.
+          * Other buffers, especially MP3 music (0x10080), are unaffected. */
+-        int effects_ring = (b->flags & 0x00000008u) && b->looping && b->bytes >= 32768u;
++        int effects_ring = is_effects_ring(b);
+         int guarded = effects_ring && !g_sfx_guard_disabled;
+         float gain = (guarded ? b->guard.gain : 1.0f) *
+                      (effects_ring ? g_sfx_output_gain : 1.0f);
