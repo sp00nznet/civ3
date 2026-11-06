@@ -9,10 +9,12 @@ import sys
 SUPPORTED_SHA256 = "407de004ab8df5293a38a0f965959316053bb2022c4fe02bdf2a9b0449c53d6e"
 MARKER = "0x100B4308: call dword ptr [0x10135688]"
 CALL = f"RECOMP_ICALL(MEM32(0x10135688)); /* {MARKER} */"
+RESIDENT_MARKER = "0x100B40DA: call edi"
+RESIDENT_CALL = f"RECOMP_ICALL(edi); /* {RESIDENT_MARKER} */"
 COUNT_SITES = ("100B93B1", "100B93DA", "100B9416", "100B943C")
 RENDER_CONTEXTS = (("100B939F", "100B93A1"), ("100B93C8", "100B93CA"),
                    ("100B9404", "100B9406"), ("100B942A", "100B942C"))
-EXPECTED = {"stream_prime": 4, **dict.fromkeys(COUNT_SITES, 1),
+EXPECTED = {"stream_prime": 4, "resident_prime": 4, **dict.fromkeys(COUNT_SITES, 1),
             **dict.fromkeys((site for pair in RENDER_CONTEXTS for site in pair), 1),
             "resident_add8": 1}
 ADD8_MARKER = "0x100B9434: call 0x1008225c"
@@ -22,19 +24,22 @@ ADD8_CALL = f"RECOMP_CALL(sub_1008225C); /* {ADD8_MARKER} */"
 def transform(text):
     if "civ3_preserve_unread_pcm" in text or "civ3_rendered_count" in text:
         raise ValueError("Expected an unmodified sound lift")
-    pattern = re.compile(r"^(?P<indent>[ \t]*)" + re.escape(CALL) + r"$", re.M)
+    modified, counts = text, {}
+    for site, call, marker in (("stream_prime", CALL, MARKER),
+                               ("resident_prime", RESIDENT_CALL, RESIDENT_MARKER)):
+        pattern = re.compile(r"^(?P<indent>[ \t]*)" + re.escape(call) + r"$", re.M)
 
-    def replace(match):
-        indent = match["indent"]
-        return (indent + "/* civ3_preserve_unread_pcm: cache priming leaves four bytes unread. */\n" +
-                indent + "if (MEM32(ebp + 0x28) == MEM32(ebp + 0x2C)) {\n" +
-                indent + "    " + CALL + "\n" + indent + "} else {\n" +
-                indent + "    esp += 12;\n" + indent + "}\n")
+        def replace(match):
+            indent = match["indent"]
+            return (indent + "/* civ3_preserve_unread_pcm: advancing would overwrite unread PCM. */\n" +
+                    indent + "if (MEM32(ebp + 0x28) == MEM32(ebp + 0x2C)) {\n" +
+                    indent + "    " + call + "\n" + indent + "} else {\n" +
+                    indent + "    esp += 12;\n" + indent + "}\n")
 
-    modified, count = pattern.subn(replace, text)
-    if text.count(MARKER) != count:
-        raise ValueError("Sound stream instruction shape changed")
-    counts = {"stream_prime": count}
+        modified, count = pattern.subn(replace, modified)
+        if text.count(marker) != count:
+            raise ValueError(f"Sound refill instruction shape changed at {site}")
+        counts[site] = count
     for address in COUNT_SITES:
         marker = f"0x{address}: mov dword ptr [ebx], eax"
         original = f"MEM32(ebx) = eax; /* {marker} */"

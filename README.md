@@ -16,8 +16,9 @@ and release tags do not start hosted jobs. Run verification locally with
 > Resident stereo and 8-bit voices also retain their samples and mixing state.
 > Higher-rate WAVs are converted in memory to the effects mixer's working rate,
 > preserving their pitch and duration. [Sample-rate verification](docs/macos-wav-rate.md).
-> Normal input and output volume are restored. Digital capture checks pass;
-> audible quality still needs user confirmation.
+> Normal input and output volume are restored. User listening confirmed the
+> broad distortion is resolved. A further walking-sound metadata repair passes
+> digital capture checks; confirmation of the remaining crackle is pending.
 > [PCM buffer findings and verification](docs/macos-mmio-sound.md).
 >
 > **MP3 decoder hardening:** a bounds violation in the guest audio fetch

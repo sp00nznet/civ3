@@ -46,7 +46,7 @@ conversion and finish cleanly. Two 8-bit voices peak at 15871, compared with
 7935 when the second voice overwrote the first. Explicit looping continues
 through the capture, while ordinary mono and stereo clips stop.
 
-The final normal-volume executable passed 29 native tests. A separate build
+The resident-render repair passed 29 native tests. A separate build
 without commercial assets passed the same 29 tests. All 102 macOS Python
 tests passed, and the MMIO buffer test passed AddressSanitizer and
 UndefinedBehaviorSanitizer checks.
@@ -79,3 +79,41 @@ The later [WAV rate repair](macos-wav-rate.md) converts higher-rate inputs in
 guest memory to the actual effects ring rate. This corrects the legacy API's
 half-rate interpretation without changing the physical output rate or
 intentional pitch settings.
+
+## Walking sounds and trailing WAV metadata
+
+User listening confirmed that the broad distortion was resolved, with a
+remaining crackle after every unit move. A follow-up capture found another
+unread-buffer refill in the short, resident WAV loader. Its first refill
+already contained the entire PCM payload. A second refill copied trailing
+`smpl` metadata over the beginning of that payload, then the loader restored
+the original PCM length. The metadata therefore reached the effects mixer.
+
+For the Worker's first footstep, the first refill read 5,160 PCM bytes at
+file offset 44. The second read copied the following 44-byte `smpl` chunk
+into the same allocation. Mixed samples included metadata words 27760, 36,
+and -20185. Nine original Worker, Warrior, and Settler walking recordings
+all produced the same unintended output peak of 27464.
+
+The build overlay now preserves unread PCM at all four resident refill
+aliases, using the existing stream-loader rule. An empty window still
+refills, and the skipped call removes the same twelve guest argument bytes.
+The initial refill, WinMM behavior, output volume, and original files are
+unchanged. The overlay validates the pinned DLL and every instruction site
+before staging.
+
+The compiled regression failed before the fix with
+`unread PCM overwritten by trailing metadata`. All six overlay tests pass
+afterward. The nine actual-DLL captures now have source-matching peaks,
+between 1991 and 7495, and no nonzero samples after their expected endings.
+All 31 native tests and 103 macOS Python tests pass.
+
+The exact rebuilt executable also completed a 50-second isolated game with
+scripted unit movement and reached turn 2 without emergency effects
+suppression. All 8,994 current original files, including saves and settings,
+retained their pre-test checksums. Both diagnostic game copies were removed.
+
+These measurements prove removal of the metadata burst at the start of each
+affected sample. They do not establish that the user's perceived end-of-move
+crackle has disappeared. Listening confirmation remains necessary for that
+specific symptom.
