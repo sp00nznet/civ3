@@ -1,70 +1,19 @@
 # Civilization III: Conquests — Static Recompilation
 
-GitHub Actions workflows are disabled in this repository to preserve the
-owner's quota. Their source permits manual dispatch only; pushes, pull requests
-and release tags do not start hosted jobs. Run verification locally with
-`ctest --test-dir build-macos --output-on-failure` and
-`python3 -m unittest discover -s tests -p 'test_macos*.py'`.
+## Native macOS Apple Silicon port
 
-> **Apple Silicon file-mapping safety:** save/asset views are now tracked
-> beyond the old 64-slot limit, with safe release, offset/size and
-> read-only access checks. A private WWII in the Pacific test reached
-> January 1942; see [file-mapping and AI-turn evidence](docs/macos-file-mapping-safety.md).
->
-> **Apple Silicon PCM buffer repair:** the native host now keeps WAV headers
-> out of the effects mixer and preserves unread bytes during stream loading.
-> Resident stereo and 8-bit voices also retain their samples and mixing state.
-> Higher-rate WAVs are converted in memory to the effects mixer's working rate,
-> preserving their pitch and duration. [Sample-rate verification](docs/macos-wav-rate.md).
-> Normal input and output volume are restored. User listening confirmed the
-> broad distortion is resolved. A further walking-sound metadata repair passes
-> digital capture checks; confirmation of the remaining crackle is pending.
-> [PCM buffer findings and verification](docs/macos-mmio-sound.md).
->
-> **MP3 decoder hardening:** a bounds violation in the guest audio fetch
-> callback is now rejected, and FFmpeg stream allocation/cleanup is safer.
-> A private 195-second Persian campaign progressed from turn 111 to 121 with
-> no runaway RSS growth observed; see [decoder and memory results](docs/macos-miles-decoder-safety.md).
->
-> **Apple Silicon audio stability:** fixed DirectSound buffer-duplication
-> leaks and unsafe audio format/stream input handling. The measured native
-> allocator remained steady through 4,096 rejected duplicates and 2,048
-> create/release cycles; see [audio memory testing](docs/macos-audio-memory.md).
->
-> **Pixel safety update:** packed-color/24-bit rendering, palette bounds and
-> clipped stretch repairs are tested on `main`; see [pixel safety](docs/macos-pixel-safety.md).
+The native 64-bit Apple Silicon implementation is complete for the validated
+local single-player use described in the [macOS validation ledger](docs/macos-validation.md).
+It runs without Wine, Rosetta, a Windows VM, or a JIT. Setup, a Finder launcher,
+save/reload support, graphics and audio repairs, and local regression tests are
+included. See [macOS setup and requirements](docs/macos.md).
 
-> **Consolidated on `main`:** all fork branches are integrated. The tested macOS
-> implementation is authoritative; earlier branch history is preserved.
-
-> **Earlier bitmap safety:** [bounded bitmap allocation and cleanup](docs/macos-bitmap-safety.md),
-> with 78 Python and 16 native tests passing locally.
-
-> **Performance and stability:** idle-menu CPU fell by 85% in a native-window
-> A/B check (89% across repeated headless runs), with identical menu pixels.
-> Graphics-copy paths and framebuffer lifetime are improved; see the
-> [measurements, scope and regression evidence](docs/macos-performance.md).
-
-> **Apple Silicon single-player coverage:** actual campaign continuation,
-> bundled Conquests and installed rules-mod tests are documented in
-> [the compatibility matrix](docs/macos-singleplayer-coverage.md). The larger
-> scenarios still need additional AI-turn and long-session verification.
->
-> **Native macOS runtime update:** improved CPU-state isolation and guest-function
-> lookup caching, with source-controlled Finder launcher and automatic cleanup
-> of disposable QA copies. See [runtime details](docs/macos-runtime-2026.md).
->
-> **Reliability update:** safer relaunching, protected video recordings and
-> validated save/reload are documented in [macOS reliability](docs/macos-reliability.md).
-
-> **macOS fork:** native 64-bit Apple Silicon build verified through windowed
-> gameplay on the default `main` branch; Intel gameplay is untested. See [macOS setup](docs/macos.md)
-> and [verified test status](docs/macos-validation.md). The upstream
-> Windows/Linux status below does not establish macOS compatibility. Keep
-> culture-linked starts **off by default**; the new [startup repair](docs/macos-culture-starts.md)
-> is tested on initial turns but remains experimental.
-> Compressed manual saving/reloading is now tested across separate processes;
-> [save/load findings and regression coverage](docs/macos-save-load.md).
+The latest local build passes 31 native tests and 103 Python tests. Verified game
+runs cover new games, compressed save/reload, existing campaigns, and selected
+Conquests scenarios and rules mods. The user accepted the local project as
+complete after playtesting. Intel gameplay, multiplayer, exhaustive long-game
+compatibility, and signed standalone distribution remain outside this validation.
+No proprietary game assets or generated game code are distributed.
 
 A static recompilation of **Sid Meier's Civilization III: Conquests**
 (Firaxis, 2003; the 2015 Steam "Complete" build) from the shipping Win32

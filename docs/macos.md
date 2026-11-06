@@ -5,11 +5,16 @@ This fork adds a **native 64-bit macOS host**, using the upstream pcrecomp
 separate guest-memory mapping; they are not truncated native Mac pointers.
 No Wine, Windows VM, Rosetta, or JIT is used by this path.
 
-**Status: experimental.** Native runtime and setup tests pass on Apple Silicon; the main menu and an initial multi-turn game have rendered successfully.
-Full-game validation is tracked in `macos-validation.md`. Source-only host/runtime
-checks have passed on Apple Silicon and Intel CI runners. Commercial gameplay
-on Intel, multiplayer, long campaigns, and distribution/signing remain unverified.
-The upstream Windows/Linux compatibility table is not a macOS test result.
+**Status: completed and locally tested on Apple Silicon for the documented
+single-player scope.** The user accepted the local project after playtesting.
+The latest build passes 31 native tests and 103 Python tests. New-game,
+compressed save/reload, existing campaign, selected scenario, and rules-mod
+results are recorded in [the validation ledger](macos-validation.md) and
+[the single-player coverage matrix](macos-singleplayer-coverage.md).
+Source-only runtime checks also passed on Intel CI runners; commercial Intel
+gameplay, multiplayer, exhaustive long campaigns, and signed standalone
+distribution remain unverified. The upstream Windows/Linux table is not a
+macOS test result.
 
 **Culture-linked starts:** the Mac build now includes an experimental repair
 for the uninitialized civilization lookup that caused the earlier startup crash.

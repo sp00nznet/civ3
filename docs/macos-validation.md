@@ -1,8 +1,36 @@
 # macOS validation ledger
 
-Local verification on **November 3, 2026**, not a claim of complete game compatibility.
+## Completed Apple Silicon implementation, November 5, 2026
 
-## Latest performance and stability pass
+The user accepted the local project as complete after single-player playtesting.
+This is validation of the documented Apple Silicon scope, not every game mode,
+Intel gameplay, a full campaign to completion, or signed distribution.
+
+The final playable executable SHA-256 is
+`750fc1b56a3084a58d09e260418eccdb55db2d494c1ba6d5e856649501002c84`.
+It passes all **31 native tests and 103 macOS Python tests**. The latest isolated
+movement check ran for 50 seconds and reached turn 2. Earlier audio verification
+reached turn 4 in a new game and continued a 195-second campaign from turn 111
+to 121 with five autosaves. Compressed save/reload and scenario coverage are
+recorded below and in the linked reports.
+
+Actual sound-DLL captures verify short mono, stereo, and 8-bit voices, overlapping
+voices, looping, correct WAV timing, and completion to silence. All 44 original
+44.1 kHz WAVs passed a metadata-preservation conversion audit. The final walking
+repair removes metadata bytes from the PCM window in nine captured unit
+recordings. The user confirmed the broad audible distortion was resolved before
+that last repair. Digital captures prove removal of the metadata contamination;
+no separate listening verdict was recorded for the final repair.
+See [PCM buffer results](macos-mmio-sound.md) and [WAV timing](macos-wav-rate.md).
+
+Source-only runtime tests and targeted sanitizer checks passed during the audio
+repair. The latest private tests preserved all 8,994 current original files,
+saves, and settings. Proprietary inputs remain local. Development caches, raw
+captures, generated sources, and disposable test copies may be removed at project
+closeout. The ignored work paths named in historical entries below may therefore
+no longer exist; source-controlled tests and commands remain reproducible.
+
+## Historical performance and stability pass, November 3, 2026
 
 The final executable for this pass is
 `c08b55adf7c2827b5d6ad158c15e29644f82f6a7a93bd448faff275e78061881`.
